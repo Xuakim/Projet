@@ -27,6 +27,9 @@ import androidx.core.view.WindowInsetsCompat;
 
 import java.util.ArrayList;
 import java.util.List;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothProfile;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -37,6 +40,7 @@ public class MainActivity extends AppCompatActivity {
     private ListView deviceListView;
     private ArrayAdapter<String> deviceListAdapter;
     private final List<String> discoveredDevices = new ArrayList<>();
+    private BluetoothGatt bluetoothGatt;
 
     private final ActivityResultLauncher<Intent> requestEnableBluetoothLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -69,10 +73,23 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // Initialisation de la ListView et de son adaptateur
-        // CORRECTION : On initialise la variable de classe deviceListView
         deviceListView = findViewById(R.id.device_list);
         deviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, discoveredDevices);
         deviceListView.setAdapter(deviceListAdapter);
+
+        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
+            String deviceInfo = discoveredDevices.get(position);
+            String deviceAddress = deviceInfo.substring(deviceInfo.length() - 17);
+            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(deviceAddress);
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+                if (bluetoothAdapter.isDiscovering()) {
+                    bluetoothAdapter.cancelDiscovery();
+                }
+            }
+
+            connectToDevice(device);
+        });
 
         // Enregistrer le BroadcastReceiver pour la découverte d'appareils
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
@@ -106,7 +123,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // CORRECTION : Méthode enableBluetooth() nettoyée et corrigée
     private void enableBluetooth() {
         if (!bluetoothAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
@@ -172,60 +188,72 @@ public class MainActivity extends AppCompatActivity {
     };
 
     private void startDiscovery() {
-        // Pour Android 12+ (API 31+), on vérifie les permissions avant TOUTE opération de découverte.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "Permission BLUETOOTH_SCAN requise pour la recherche.", Toast.LENGTH_LONG).show();
-                // On ne peut pas continuer sans la permission.
                 return;
             }
         }
-        // Pour les versions antérieures, la permission ACCESS_FINE_LOCATION (déjà demandée) est suffisante.
 
-        // Si une recherche est déjà en cours, on l'arrête.
-        // Cette action est maintenant protégée par la vérification ci-dessus.
         if (bluetoothAdapter.isDiscovering()) {
-            bluetoothAdapter.cancelDiscovery();
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+                bluetoothAdapter.cancelDiscovery();
+            }
         }
 
-        // On démarre une nouvelle recherche.
-        // Cette action est également protégée.
-        if (bluetoothAdapter.startDiscovery()) {
-            Toast.makeText(this, "Recherche des appareils en cours...", Toast.LENGTH_SHORT).show();
-            discoveredDevices.clear(); // On vide la liste pour la nouvelle recherche.
-            deviceListAdapter.notifyDataSetChanged();
-        } else {
-            Toast.makeText(this, "Erreur lors du démarrage de la recherche.", Toast.LENGTH_SHORT).show();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+            if (bluetoothAdapter.startDiscovery()) {
+                Toast.makeText(this, "Recherche des appareils en cours...", Toast.LENGTH_SHORT).show();
+                discoveredDevices.clear();
+                deviceListAdapter.notifyDataSetChanged();
+            } else {
+                Toast.makeText(this, "Erreur lors du démarrage de la recherche.", Toast.LENGTH_SHORT).show();
+            }
         }
     }
+
+    private void connectToDevice(BluetoothDevice device) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            bluetoothGatt = device.connectGatt(this, false, gattCallback);
+        }
+    }
+
+    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Connecté au serveur GATT.", Toast.LENGTH_SHORT).show());
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                    gatt.discoverServices();
+                }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Déconnecté du serveur GATT.", Toast.LENGTH_SHORT).show());
+            }
+        }
+    };
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
-        // D'abord, on arrête la recherche si elle est en cours, en vérifiant les permissions.
-        if (bluetoothAdapter != null) {
-            boolean canScan = true;
-            // Sur Android 12+, on vérifie la permission BLUETOOTH_SCAN.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                    canScan = false; // La permission n'est pas accordée.
-                }
-            }
-
-            // On ne peut annuler la découverte que si on a la permission.
-            if (canScan && bluetoothAdapter.isDiscovering()) {
-                bluetoothAdapter.cancelDiscovery();
+        if (bluetoothGatt != null) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                bluetoothGatt.close();
+                bluetoothGatt = null;
             }
         }
 
-        // Ensuite, on désenregistre le receiver pour éviter les fuites mémoire.
-        // Cette opération doit toujours être effectuée si le receiver a été enregistré.
+        if (bluetoothAdapter != null) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+                if (bluetoothAdapter.isDiscovering()) {
+                    bluetoothAdapter.cancelDiscovery();
+                }
+            }
+        }
+
         try {
             unregisterReceiver(discoveryReceiver);
         } catch (IllegalArgumentException e) {
-            // Cette exception peut être levée si le receiver n'a jamais été enregistré.
-            // On peut l'ignorer en toute sécurité.
             e.printStackTrace();
         }
     }
