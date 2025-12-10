@@ -30,6 +30,11 @@ import java.util.List;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothProfile;
+
+import java.util.UUID;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
 //IMPORT DES PACKAGES NECESSAIRES
 public class MainActivity extends AppCompatActivity {
 
@@ -41,6 +46,13 @@ public class MainActivity extends AppCompatActivity {
     private ArrayAdapter<String> deviceListAdapter;
     private final List<String> discoveredDevices = new ArrayList<>();
     private BluetoothGatt bluetoothGatt;
+
+    // UUIDs pour le service de contrôle d'entrée audio (Microphone Profile)
+    // Remplacer si votre appareil utilise des UUIDs personnalisés.
+    private static final UUID SERVICE_UUID = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb"); // Audio Input Control Service
+    private static final UUID CHARACTERISTIC_UUID = UUID.fromString("00002b77-0000-1000-8000-00805f9b34fb"); // Audio Input State
+    // UUID pour le Client Characteristic Configuration Descriptor (CCCD)
+    private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final ActivityResultLauncher<Intent> requestEnableBluetoothLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -228,6 +240,56 @@ public class MainActivity extends AppCompatActivity {
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Déconnecté du serveur GATT.", Toast.LENGTH_SHORT).show());
+            }
+        }
+
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothGattService service = gatt.getService(SERVICE_UUID);
+                if (service != null) {
+                    BluetoothGattCharacteristic characteristic =
+                            service.getCharacteristic(CHARACTERISTIC_UUID);
+                    if (characteristic != null) {
+                        if (ActivityCompat.checkSelfPermission(MainActivity.this,
+                                Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+                            return;
+                        // Étape 4: S'abonner aux notifications
+                        gatt.setCharacteristicNotification(characteristic, true);
+                        BluetoothGattDescriptor descriptor =
+                                characteristic.getDescriptor(CCCD_UUID);
+
+                        descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                        gatt.writeDescriptor(descriptor);
+                    } else {
+                        // Caractéristique non trouvée
+                    }
+                } else {
+                    // Service non trouvé
+                }
+            }
+        }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Abonnement aux notifications réussi.", Toast.LENGTH_SHORT).show());
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt,
+                                          BluetoothGattCharacteristic characteristic) {
+            // Étape 4: Les données ont changé, on les affiche
+            final byte[] data = characteristic.getValue();
+            if (data != null && data.length > 0) {
+                final StringBuilder stringBuilder = new
+                        StringBuilder(data.length);
+                for(byte byteChar : data) {
+                    stringBuilder.append(String.format("%02X ",
+                            byteChar));
+                }
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Données reçues: " + stringBuilder.toString(), Toast.LENGTH_SHORT).show());
             }
         }
     };
