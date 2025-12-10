@@ -30,7 +30,7 @@ import java.util.List;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothProfile;
-//IMPORT
+//IMPORT DES PACKAGES NECESSAIRES
 public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_PERMISSIONS_CODE = 123;
