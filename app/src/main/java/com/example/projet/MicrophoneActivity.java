@@ -13,6 +13,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.PorterDuff;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -171,20 +172,42 @@ public class MicrophoneActivity extends AppCompatActivity {
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             super.onCharacteristicWrite(gatt, characteristic, status);
-            final String msg = status == BluetoothGatt.GATT_SUCCESS ? "Commande envoyée!" : "Erreur d'envoi de la commande.";
-            runOnUiThread(() -> Toast.makeText(MicrophoneActivity.this, msg, Toast.LENGTH_SHORT).show());
+            runOnUiThread(() -> {
+                final String msg = status == BluetoothGatt.GATT_SUCCESS ? "Commande envoyée!" : "Erreur d'envoi de la commande.";
+                Toast.makeText(MicrophoneActivity.this, msg, Toast.LENGTH_SHORT).show();
+                // Mise à jour optimiste de l'UI : on inverse l'état local immédiatement après un write réussi
+                if (status == BluetoothGatt.GATT_SUCCESS && AUDIO_INPUT_CONTROL_POINT_UUID.equals(characteristic.getUuid())) {
+                    isMuted = !isMuted;
+                    updateMuteUI(isMuted);
+                }
+            });
+
+            if (status == BluetoothGatt.GATT_SUCCESS && AUDIO_INPUT_CONTROL_POINT_UUID.equals(characteristic.getUuid())) {
+                BluetoothGattService service = gatt.getService(AICS_SERVICE_UUID);
+                if (service != null) {
+                    BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
+                    if (inputStateChar != null) {
+                        if (ActivityCompat.checkSelfPermission(MicrophoneActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                            return;
+                        }
+                        gatt.readCharacteristic(inputStateChar);
+                    }
+                }
+            }
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                byte[] value = characteristic.getValue();
                 parseCharacteristic(characteristic, value);
             }
             readNextCharacteristic();
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            byte[] value = characteristic.getValue();
             parseCharacteristic(characteristic, value);
         }
     };
@@ -233,6 +256,8 @@ public class MicrophoneActivity extends AppCompatActivity {
         if (descriptor != null) {
             descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
             bluetoothGatt.writeDescriptor(descriptor);
+        } else {
+            populateReadQueueAndRead(bluetoothGatt);
         }
     }
 
@@ -240,26 +265,48 @@ public class MicrophoneActivity extends AppCompatActivity {
         UUID uuid = characteristic.getUuid();
         if (data == null) return;
 
+        // Log received data for debugging
+        Log.d(TAG, "Data received from " + uuid.toString() + ": " + Arrays.toString(data));
+
         runOnUiThread(() -> {
-            if (AUDIO_INPUT_STATE_UUID.equals(uuid) && data.length >= 3) {
-                final int gain = data[0]; // sint8
-                final int mute = data[1] & 0xFF; // uint8
-                final int gainMode = data[2] & 0xFF; // uint8
+            if (AUDIO_INPUT_STATE_UUID.equals(uuid)) {
+                if (data.length >= 3) {
+                    final int gain = data[0]; // sint8
+                    final int mute = data[1] & 0xFF; // uint8
+                    final int gainMode = data[2] & 0xFF; // uint8
 
-                isMuted = (mute == 1);
+                    isMuted = (mute == 1);
 
-                micGainStateView.setText(gain + " dB");
-                micMuteStateView.setText(isMuted ? "Mute" : "Non Mute");
-                micGainModeStateView.setText((gainMode == 1) ? "Automatique" : "Manuel");
-                muteToggleButton.setText(isMuted ? "Unmute" : "Mute");
+                    micGainStateView.setText(gain + " dB");
+                    micMuteStateView.setText(isMuted ? "Mute" : "Non Mute");
+                    micGainModeStateView.setText((gainMode == 1) ? "Automatique" : "Manuel");
+                    muteToggleButton.setText(isMuted ? "Unmute" : "Mute");
 
-                if (isMuted) {
-                    muteIcon.setImageResource(R.drawable.ic_mic_off);
-                    muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
+                    if (isMuted) {
+                        muteIcon.setImageResource(R.drawable.ic_mic_off);
+                        muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
+                    } else {
+                        muteIcon.setImageResource(R.drawable.ic_mic);
+                        muteIcon.clearColorFilter();
+                    }
                 } else {
-                    muteIcon.setImageResource(R.drawable.ic_mic);
-                    muteIcon.clearColorFilter();
+                    Toast.makeText(this, "Audio Input State data length is " + data.length + ", expected >= 3", Toast.LENGTH_LONG).show();
                 }
+            }
+        });
+    }
+
+    // Helper pour mettre à jour l'UI liée au mute depuis un seul endroit
+    private void updateMuteUI(boolean muted) {
+        runOnUiThread(() -> {
+            micMuteStateView.setText(muted ? "Mute" : "Non Mute");
+            muteToggleButton.setText(muted ? "Unmute" : "Mute");
+            if (muted) {
+                muteIcon.setImageResource(R.drawable.ic_mic_off);
+                muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
+            } else {
+                muteIcon.setImageResource(R.drawable.ic_mic);
+                muteIcon.clearColorFilter();
             }
         });
     }
