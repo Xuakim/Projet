@@ -270,10 +270,20 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             final byte[] data = characteristic.getValue();
-            if (data != null && data.length >= 2) { // Vérifier qu'on a au moins 2 bytes
-                final int mute = data[1]; // Le 2ème byte est l'état Mute
+            if (data != null && data.length >= 3) { // La caractéristique AICS a 3 bytes
+                final int gain = data[0]; // sint8: Niveau de gain
+                final int mute = data[1]; // uint8: État Mute (0 = Non Mute, 1 = Mute)
+                final int gainMode = data[2]; // uint8: Mode de gain (0 = Manuel, 1 = Auto)
+
                 final String muteStatus = (mute == 1) ? "Mute" : "Non Mute";
-                runOnUiThread(() -> dataDisplay.setText("État du microphone: " + muteStatus));
+                final String gainModeStatus = (gainMode == 1) ? "Automatique" : "Manuel";
+
+                final String formattedData = "État du microphone:\n" +
+                        " - Mute: " + muteStatus + "\n" +
+                        " - Gain: " + gain + " dB\n" +
+                        " - Mode de gain: " + gainModeStatus;
+
+                runOnUiThread(() -> dataDisplay.setText(formattedData));
             }
         }
     };
