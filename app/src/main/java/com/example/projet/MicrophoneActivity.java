@@ -138,7 +138,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             processReadQueue();
         }
 
-        // Corrected callback for Android 13+
+        // Callback for Android 13+
         @Override
         public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -159,7 +159,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             }
         }
 
-        // Corrected callback for Android 13+
+        // Callback for Android 13+
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
             parseCharacteristic(characteristic.getUuid(), value);
