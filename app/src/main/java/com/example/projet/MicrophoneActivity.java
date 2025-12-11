@@ -153,11 +153,14 @@ public class MicrophoneActivity extends AppCompatActivity {
 
             audioInputControlPointChar = service.getCharacteristic(AUDIO_INPUT_CONTROL_POINT_UUID);
             BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
+            
+            // Try to enable notifications, but be ready to catch a SecurityException
             if (inputStateChar != null) {
                 setNotificationForCharacteristic(inputStateChar, true);
-            } else {
-                populateReadQueueAndRead(gatt);
             }
+            
+            // Always try to read the initial state, even if notifications fail.
+            populateReadQueueAndRead(gatt);
         }
 
         @Override
@@ -175,39 +178,25 @@ public class MicrophoneActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 final String msg = status == BluetoothGatt.GATT_SUCCESS ? "Commande envoyée!" : "Erreur d'envoi de la commande.";
                 Toast.makeText(MicrophoneActivity.this, msg, Toast.LENGTH_SHORT).show();
-                // Mise à jour optimiste de l'UI : on inverse l'état local immédiatement après un write réussi
+
                 if (status == BluetoothGatt.GATT_SUCCESS && AUDIO_INPUT_CONTROL_POINT_UUID.equals(characteristic.getUuid())) {
+                    // Optimistic UI update: assume the write succeeded and toggle the state.
                     isMuted = !isMuted;
-                    updateMuteUI(isMuted);
+                    updateMuteUI();
                 }
             });
-
-            if (status == BluetoothGatt.GATT_SUCCESS && AUDIO_INPUT_CONTROL_POINT_UUID.equals(characteristic.getUuid())) {
-                BluetoothGattService service = gatt.getService(AICS_SERVICE_UUID);
-                if (service != null) {
-                    BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
-                    if (inputStateChar != null) {
-                        if (ActivityCompat.checkSelfPermission(MicrophoneActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                            return;
-                        }
-                        gatt.readCharacteristic(inputStateChar);
-                    }
-                }
-            }
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                byte[] value = characteristic.getValue();
                 parseCharacteristic(characteristic, value);
             }
             readNextCharacteristic();
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            byte[] value = characteristic.getValue();
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
             parseCharacteristic(characteristic, value);
         }
     };
@@ -218,6 +207,7 @@ public class MicrophoneActivity extends AppCompatActivity {
 
         characteristicReadQueue.clear();
 
+        // We try to read all characteristics. The read will be caught if it fails.
         BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
         if (inputStateChar != null) characteristicReadQueue.add(inputStateChar);
 
@@ -243,7 +233,14 @@ public class MicrophoneActivity extends AppCompatActivity {
             return;
         }
         if (!characteristicReadQueue.isEmpty()) {
-            bluetoothGatt.readCharacteristic(characteristicReadQueue.poll());
+            try {
+                BluetoothGattCharacteristic charToRead = characteristicReadQueue.poll();
+                bluetoothGatt.readCharacteristic(charToRead);
+            } catch (SecurityException e) {
+                Log.w(TAG, "Failed to read characteristic due to security exception. Skipping.", e);
+                // Read the next one in the queue
+                readNextCharacteristic();
+            }
         } else {
             runOnUiThread(() -> progressBar.setVisibility(View.GONE));
         }
@@ -251,13 +248,28 @@ public class MicrophoneActivity extends AppCompatActivity {
 
     private void setNotificationForCharacteristic(BluetoothGattCharacteristic characteristic, boolean enabled) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
-        bluetoothGatt.setCharacteristicNotification(characteristic, enabled);
-        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
-        if (descriptor != null) {
-            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            bluetoothGatt.writeDescriptor(descriptor);
+        try {
+            bluetoothGatt.setCharacteristicNotification(characteristic, enabled);
+            BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
+            if (descriptor != null) {
+                descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                bluetoothGatt.writeDescriptor(descriptor);
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Failed to set notification due to security exception. External updates might not be detected.", e);
+        }
+    }
+
+    private void updateMuteUI() {
+        micMuteStateView.setText(isMuted ? "Mute" : "Non Mute");
+        muteToggleButton.setText(isMuted ? "Unmute" : "Mute");
+
+        if (isMuted) {
+            muteIcon.setImageResource(R.drawable.ic_mic_off);
+            muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
         } else {
-            populateReadQueueAndRead(bluetoothGatt);
+            muteIcon.setImageResource(R.drawable.ic_mic);
+            muteIcon.clearColorFilter();
         }
     }
 
@@ -278,35 +290,12 @@ public class MicrophoneActivity extends AppCompatActivity {
                     isMuted = (mute == 1);
 
                     micGainStateView.setText(gain + " dB");
-                    micMuteStateView.setText(isMuted ? "Mute" : "Non Mute");
                     micGainModeStateView.setText((gainMode == 1) ? "Automatique" : "Manuel");
-                    muteToggleButton.setText(isMuted ? "Unmute" : "Mute");
-
-                    if (isMuted) {
-                        muteIcon.setImageResource(R.drawable.ic_mic_off);
-                        muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
-                    } else {
-                        muteIcon.setImageResource(R.drawable.ic_mic);
-                        muteIcon.clearColorFilter();
-                    }
+                    
+                    updateMuteUI();
                 } else {
                     Toast.makeText(this, "Audio Input State data length is " + data.length + ", expected >= 3", Toast.LENGTH_LONG).show();
                 }
-            }
-        });
-    }
-
-    // Helper pour mettre à jour l'UI liée au mute depuis un seul endroit
-    private void updateMuteUI(boolean muted) {
-        runOnUiThread(() -> {
-            micMuteStateView.setText(muted ? "Mute" : "Non Mute");
-            muteToggleButton.setText(muted ? "Unmute" : "Mute");
-            if (muted) {
-                muteIcon.setImageResource(R.drawable.ic_mic_off);
-                muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
-            } else {
-                muteIcon.setImageResource(R.drawable.ic_mic);
-                muteIcon.clearColorFilter();
             }
         });
     }
