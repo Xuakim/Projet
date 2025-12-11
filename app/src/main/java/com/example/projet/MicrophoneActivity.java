@@ -138,7 +138,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             processReadQueue();
         }
 
-        // Callback for Android 13+
+        // Corrected callback for Android 13+
         @Override
         public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -159,7 +159,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             }
         }
 
-        // Callback for Android 13+
+        // Corrected callback for Android 13+
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
             parseCharacteristic(characteristic.getUuid(), value);
@@ -206,12 +206,19 @@ public class MicrophoneActivity extends AppCompatActivity {
 
         if (AUDIO_INPUT_STATE_UUID.equals(uuid) && data.length >= 3) {
             micGainState = data[0] + " dB";
-            micMuteState = (data[1] & 0xFF) == 1 ? "Mute" : "Non Mute";
+            micMuteState = (data[1] & 0xFF) == 1 ? "Activée" : "Désactivée";
             micGainModeState = (data[2] & 0xFF) == 1 ? "Automatique" : "Manuel";
         } else if (GAIN_SETTING_PROPERTIES_UUID.equals(uuid) && data.length >= 3) {
-            micGainProperties = String.format("Unit: %d, Min: %d, Max: %d", data[0] & 0xFF, data[1], data[2]);
+            String units = (data[0] & 0xFF) == 1 ? "dB" : "";
+            byte minGain = data[1];
+            byte maxGain = data[2];
+            micGainProperties = String.format("%d %s à %d %s", minGain, units, maxGain, units);
         } else if (AUDIO_INPUT_TYPE_UUID.equals(uuid) && data.length > 0) {
-            micInputType = ((data[0] & 0xFF) == 0x07) ? "Microphone" : "Autre";
+            switch (data[0] & 0xFF) {
+                case 0x01: micInputType = "Non spécifié"; break;
+                case 0x07: micInputType = "Microphone"; break;
+                default: micInputType = "Autre"; break;
+            }
         } else if (AUDIO_INPUT_STATUS_UUID.equals(uuid) && data.length > 0) {
             micStatus = ((data[0] & 0xFF) == 1) ? "Actif" : "Inactif";
         } else if (AUDIO_INPUT_DESCRIPTION_UUID.equals(uuid)) {
@@ -221,14 +228,16 @@ public class MicrophoneActivity extends AppCompatActivity {
     }
 
     private void displayAllData() {
-        final String formattedData = "--- État du Microphone ---\n" +
-                "Mute: " + micMuteState + "\n" +
-                "Gain: " + micGainState + "\n" +
-                "Mode de gain: " + micGainModeState + "\n" +
-                "Propriétés de gain: " + micGainProperties + "\n" +
-                "Type d'entrée: " + micInputType + "\n" +
-                "Statut: " + micStatus + "\n" +
-                "Description: " + micDescription;
+        final String formattedData = "🎙️ État du Microphone\n\n" +
+                "Sourdine : " + micMuteState + "\n" +
+                "Volume (Gain) : " + micGainState + "\n" +
+                "Mode de Gain : " + micGainModeState + "\n\n" +
+                "--- Détails Techniques ---\n" +
+                "Plage de Gain : " + micGainProperties + "\n" +
+                "Source : " + micInputType + "\n" +
+                "Statut de l'entrée : " + micStatus + "\n" +
+                "Description : " + micDescription;
+
         runOnUiThread(() -> {
             characteristicsDisplayTextView.setText(formattedData);
             characteristicsDisplayTextView.setVisibility(View.VISIBLE);
