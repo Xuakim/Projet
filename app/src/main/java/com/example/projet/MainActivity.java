@@ -12,8 +12,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -27,6 +29,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.recyclerview.widget.RecyclerView;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -42,7 +45,7 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements DeviceListAdapter.OnDeviceClickListener {
 
     private static final int REQUEST_PERMISSIONS_CODE = 123;
     private BluetoothAdapter bluetoothAdapter;
@@ -50,12 +53,11 @@ public class MainActivity extends AppCompatActivity {
     private boolean scanning;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    private ListView deviceListView;
-    private ArrayAdapter<String> deviceListAdapter;
-    private final List<String> discoveredDevices = new ArrayList<>();
+    private DeviceListAdapter deviceListAdapter;
     private final List<BluetoothDevice> discoveredBtDevices = new ArrayList<>();
     private BluetoothGatt bluetoothGatt;
     private TextView dataDisplay;
+    private ProgressBar scanProgressBar;
 
     private static final long SCAN_PERIOD = 10000; // 10 secondes
 
@@ -110,25 +112,24 @@ public class MainActivity extends AppCompatActivity {
         }
         bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
 
-        deviceListView = findViewById(R.id.device_list);
-        deviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, discoveredDevices);
-        deviceListView.setAdapter(deviceListAdapter);
+        RecyclerView devicesRecyclerView = findViewById(R.id.devices_recycler_view);
+        deviceListAdapter = new DeviceListAdapter(discoveredBtDevices, this);
+        devicesRecyclerView.setAdapter(deviceListAdapter);
         dataDisplay = findViewById(R.id.data_display);
-
-        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
-            final BluetoothDevice device = discoveredBtDevices.get(position);
-            if (device == null) return;
-
-            scanLeDevice(false); // Arrêter la recherche avant de se connecter
-            connectToDevice(device);
-        });
+        scanProgressBar = findViewById(R.id.scan_progress_bar);
 
         checkAndRequestPermissions();
     }
 
+    @Override
+    public void onDeviceClick(BluetoothDevice device) {
+        scanLeDevice(false); // Arrêter la recherche avant de se connecter
+        connectToDevice(device);
+    }
+
     private void connectToDevice(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            runOnUiThread(() -> dataDisplay.setText("Connexion à " + device.getName() + "..."));
+            runOnUiThread(() -> dataDisplay.setText("Connexion à " + (device.getName() != null ? device.getName() : "appareil inconnu") + "..."));
             bluetoothGatt = device.connectGatt(this, false, gattCallback);
         }
     }
@@ -143,20 +144,21 @@ public class MainActivity extends AppCompatActivity {
             handler.postDelayed(() -> {
                 if (scanning) {
                     scanning = false;
+                    scanProgressBar.setVisibility(View.GONE);
                     bluetoothLeScanner.stopScan(leScanCallback);
                     Toast.makeText(this, "Fin de la recherche BLE.", Toast.LENGTH_SHORT).show();
                 }
             }, SCAN_PERIOD);
 
             scanning = true;
-            discoveredDevices.clear();
             discoveredBtDevices.clear();
             deviceListAdapter.notifyDataSetChanged();
+            scanProgressBar.setVisibility(View.VISIBLE);
             bluetoothLeScanner.startScan(leScanCallback);
-            Toast.makeText(this, "Recherche BLE en cours...", Toast.LENGTH_SHORT).show();
         } else {
             if (scanning) {
                 scanning = false;
+                scanProgressBar.setVisibility(View.GONE);
                 bluetoothLeScanner.stopScan(leScanCallback);
             }
         }
@@ -172,10 +174,7 @@ public class MainActivity extends AppCompatActivity {
             }
             String deviceName = device.getName();
             if (deviceName != null && !deviceName.isEmpty()) {
-                String deviceAddress = device.getAddress();
-                String deviceInfo = deviceName + "\n" + deviceAddress;
                 if (!discoveredBtDevices.contains(device)) {
-                    discoveredDevices.add(deviceInfo);
                     discoveredBtDevices.add(device);
                     deviceListAdapter.notifyDataSetChanged();
                 }
@@ -281,7 +280,7 @@ public class MainActivity extends AppCompatActivity {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, "Déconnecté du serveur GATT.", Toast.LENGTH_SHORT).show();
-                    dataDisplay.setText("En attente de données...");
+                    dataDisplay.setText("En attente de connexion...");
                 });
             }
         }
@@ -334,9 +333,9 @@ public class MainActivity extends AppCompatActivity {
         }
         
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                parseCharacteristic(characteristic);
+                parseCharacteristic(characteristic, value);
             }
 
             // Lire la caractéristique suivante dans la file
@@ -347,14 +346,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
             // Une caractéristique notifiée a changé
-            parseCharacteristic(characteristic);
+            parseCharacteristic(characteristic, value);
         }
 
-        private void parseCharacteristic(final BluetoothGattCharacteristic characteristic) {
+        private void parseCharacteristic(final BluetoothGattCharacteristic characteristic, final byte[] data) {
             UUID uuid = characteristic.getUuid();
-            byte[] data = characteristic.getValue();
             if (data == null) return;
 
             if (AUDIO_INPUT_STATE_UUID.equals(uuid) && data.length >= 3) {
