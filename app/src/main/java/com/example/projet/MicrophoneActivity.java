@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
@@ -24,6 +25,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.UUID;
@@ -108,6 +110,9 @@ public class MicrophoneActivity extends AppCompatActivity {
         byte[] value = new byte[1];
         // Opcode 0x03 to Mute, 0x02 to Unmute
         value[0] = (byte) (isMuted ? 0x02 : 0x03);
+        
+        Toast.makeText(this, "Donnée brute envoyée: " + Arrays.toString(value), Toast.LENGTH_SHORT).show();
+        
         audioInputControlPointChar.setValue(value);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -246,13 +251,14 @@ public class MicrophoneActivity extends AppCompatActivity {
                 micGainStateView.setText(gain + " dB");
                 micMuteStateView.setText(isMuted ? "Mute" : "Non Mute");
                 micGainModeStateView.setText((gainMode == 1) ? "Automatique" : "Manuel");
+                muteToggleButton.setText(isMuted ? "Unmute" : "Mute");
 
                 if (isMuted) {
                     muteIcon.setImageResource(R.drawable.ic_mic_off);
-                    muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light));
+                    muteIcon.setColorFilter(ContextCompat.getColor(this, android.R.color.holo_red_light), PorterDuff.Mode.SRC_IN);
                 } else {
                     muteIcon.setImageResource(R.drawable.ic_mic);
-                    muteIcon.setColorFilter(null);
+                    muteIcon.clearColorFilter();
                 }
             }
         });
