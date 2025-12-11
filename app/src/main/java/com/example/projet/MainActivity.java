@@ -50,9 +50,6 @@ public class MainActivity extends AppCompatActivity {
     // --- UUIDs ---
     private static final UUID MIC_CONTROL_SERVICE_UUID = UUID.fromString("0000184D-0000-1000-8000-00805f9b34fb");
     private static final UUID MIC_MUTE_UUID = UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_CONTROL_SERVICE_UUID = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_STATE_UUID = UUID.fromString("00002b77-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_DESCRIPTION_UUID = UUID.fromString("00002b7c-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     // --- UI & Data ---
@@ -144,7 +141,7 @@ public class MainActivity extends AppCompatActivity {
                     String deviceName = device.getName();
                     String deviceAddress = device.getAddress();
                     if (deviceName != null && !deviceName.isEmpty()) {
-                        String deviceInfo = deviceName + "\n" + deviceAddress;
+                        String deviceInfo = deviceName + " " + deviceAddress;
                         if (!discoveredDevices.contains(deviceInfo)) {
                             discoveredDevices.add(deviceInfo);
                             deviceListAdapter.notifyDataSetChanged();
@@ -177,23 +174,19 @@ public class MainActivity extends AppCompatActivity {
 
     private String getCharacteristicName(UUID uuid) {
         if (MIC_MUTE_UUID.equals(uuid)) return "Mic Mute";
-        if (AUDIO_INPUT_DESCRIPTION_UUID.equals(uuid)) return "Audio Input Description";
-        if (AUDIO_INPUT_STATE_UUID.equals(uuid)) return "Audio Input State";
         return "Unknown Characteristic";
     }
 
     private void initializeCharacteristicsMap() {
         characteristicValues.clear();
         characteristicValues.put(getCharacteristicName(MIC_MUTE_UUID), "En attente...");
-        characteristicValues.put(getCharacteristicName(AUDIO_INPUT_DESCRIPTION_UUID), "En attente...");
-        characteristicValues.put(getCharacteristicName(AUDIO_INPUT_STATE_UUID), "En attente...");
         updateDataDisplay();
     }
 
     private void updateDataDisplay() {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> entry : characteristicValues.entrySet()) {
-            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n\n");
+            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append(" ");
         }
         runOnUiThread(() -> dataDisplay.setText(sb.toString()));
     }
@@ -259,18 +252,6 @@ public class MainActivity extends AppCompatActivity {
                 commandQueue.add(() -> subscribeToCharacteristic(gatt, micService.getCharacteristic(MIC_MUTE_UUID)));
             } else {
                 runOnUiThread(() -> characteristicValues.put(getCharacteristicName(MIC_MUTE_UUID), "Service non trouvé"));
-            }
-
-            // Audio Input Control Service
-            BluetoothGattService audioService = gatt.getService(AUDIO_INPUT_CONTROL_SERVICE_UUID);
-            if (audioService != null) {
-                commandQueue.add(() -> readCharacteristic(gatt, audioService.getCharacteristic(AUDIO_INPUT_DESCRIPTION_UUID)));
-                commandQueue.add(() -> subscribeToCharacteristic(gatt, audioService.getCharacteristic(AUDIO_INPUT_STATE_UUID)));
-            } else {
-                runOnUiThread(() -> {
-                    characteristicValues.put(getCharacteristicName(AUDIO_INPUT_DESCRIPTION_UUID), "Service non trouvé");
-                    characteristicValues.put(getCharacteristicName(AUDIO_INPUT_STATE_UUID), "Service non trouvé");
-                });
             }
 
             updateDataDisplay();
@@ -366,12 +347,6 @@ public class MainActivity extends AppCompatActivity {
                         case 2: info = "Sourdine désactivée"; break;
                         default: info = "Valeur inconnue: " + (data[0] & 0xFF); break;
                     }
-                }
-            } else if (AUDIO_INPUT_DESCRIPTION_UUID.equals(uuid)) {
-                info = new String(data);
-            } else if (AUDIO_INPUT_STATE_UUID.equals(uuid)) {
-                if (data.length >= 3) {
-                    info = String.format("Gain:%d, Mute:%s, Mode:%s", (data[0] & 0xFF), (data[1] == 1 ? "Muet" : "Non muet"), (data[2] == 0 ? "Manual" : "Auto"));
                 }
             }
 
