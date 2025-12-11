@@ -15,8 +15,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -38,14 +40,23 @@ public class MicrophoneActivity extends AppCompatActivity {
     private static final UUID MUTE_CHARACTERISTIC_UUID = UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb"); // Mute Characteristic
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
+    // UUIDs for Audio Input Control Service (AICS)
+    private static final UUID AICS_SERVICE_UUID = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
+    private static final UUID AICS_CONTROL_POINT_CHARACTERISTIC_UUID = UUID.fromString("00002B79-0000-1000-8000-00805f9b34fb");
+
     // UI Elements
     private TextView headerText;
     private ProgressBar progressBar;
     private MaterialCardView micStateCard;
     private TextView micMuteStateView;
     private ImageView muteIcon;
+    private SeekBar gainSeekBar;
+    private Button muteButton;
+    private Button unmuteButton;
 
     private BluetoothGatt bluetoothGatt;
+    private BluetoothGattCharacteristic aicsControlPointChar;
+    private BluetoothGattCharacteristic muteCharacteristic;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -57,6 +68,9 @@ public class MicrophoneActivity extends AppCompatActivity {
         micStateCard = findViewById(R.id.mic_state_card);
         micMuteStateView = findViewById(R.id.mic_mute_state);
         muteIcon = findViewById(R.id.mute_icon);
+        gainSeekBar = findViewById(R.id.gain_seekbar);
+        muteButton = findViewById(R.id.mute_button);
+        unmuteButton = findViewById(R.id.unmute_button);
 
         Intent intent = getIntent();
         String deviceAddress = intent.getStringExtra("device_address");
@@ -86,6 +100,22 @@ public class MicrophoneActivity extends AppCompatActivity {
         progressBar.setVisibility(View.VISIBLE);
         micStateCard.setVisibility(View.GONE);
         bluetoothGatt = device.connectGatt(this, false, gattCallback);
+
+        gainSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) { }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                setGain(seekBar.getProgress());
+            }
+        });
+
+        muteButton.setOnClickListener(v -> setMute(true));
+        unmuteButton.setOnClickListener(v -> setMute(false));
     }
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
@@ -113,8 +143,8 @@ public class MicrophoneActivity extends AppCompatActivity {
                 return;
             }
 
-            BluetoothGattService service = gatt.getService(MICP_SERVICE_UUID);
-            if (service == null) {
+            BluetoothGattService micpService = gatt.getService(MICP_SERVICE_UUID);
+            if (micpService == null) {
                 Log.w(TAG, "Microphone Control Service (MICP) not found");
                  runOnUiThread(() -> {
                     Toast.makeText(MicrophoneActivity.this, "Service Microphone (MICP) non trouvé.", Toast.LENGTH_LONG).show();
@@ -123,15 +153,21 @@ public class MicrophoneActivity extends AppCompatActivity {
                 return;
             }
 
-            BluetoothGattCharacteristic muteChar = service.getCharacteristic(MUTE_CHARACTERISTIC_UUID);
-            if (muteChar != null) {
-                enableNotifications(gatt, muteChar);
+            muteCharacteristic = micpService.getCharacteristic(MUTE_CHARACTERISTIC_UUID);
+            if (muteCharacteristic != null) {
+                enableNotifications(gatt, muteCharacteristic);
             } else {
                 Log.w(TAG, "Mute characteristic not found");
-                runOnUiThread(() -> {
-                    Toast.makeText(MicrophoneActivity.this, "Caractéristique Mute non trouvée.", Toast.LENGTH_LONG).show();
-                    progressBar.setVisibility(View.GONE);
-                });
+            }
+
+            BluetoothGattService aicsService = gatt.getService(AICS_SERVICE_UUID);
+            if (aicsService != null) {
+                aicsControlPointChar = aicsService.getCharacteristic(AICS_CONTROL_POINT_CHARACTERISTIC_UUID);
+                if (aicsControlPointChar == null) {
+                    Log.w(TAG, "AICS Control Point characteristic not found");
+                }
+            } else {
+                Log.w(TAG, "Audio Input Control Service (AICS) not found");
             }
         }
 
@@ -150,17 +186,80 @@ public class MicrophoneActivity extends AppCompatActivity {
 
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
-            parseAndDisplay(value);
+            if (characteristic.getUuid().equals(MUTE_CHARACTERISTIC_UUID)) {
+                parseAndDisplayMuteState(value);
+            }
         }
 
         @Override
         @SuppressWarnings("deprecation")
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                parseAndDisplay(characteristic.getValue());
+                 if (characteristic.getUuid().equals(MUTE_CHARACTERISTIC_UUID)) {
+                    parseAndDisplayMuteState(characteristic.getValue());
+                }
             }
         }
     };
+
+    private void setMute(boolean mute) {
+        if (bluetoothGatt == null || muteCharacteristic == null) {
+            Log.w(TAG, "Cannot set mute state, GATT or characteristic not available.");
+            Toast.makeText(this, "Impossible de changer l'état du micro.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if ((muteCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
+            Log.w(TAG, "Mute characteristic is not writable");
+            Toast.makeText(this, "Caractéristique Mute non accessible en écriture.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        byte[] value = new byte[1];
+        value[0] = (byte) (mute ? 1 : 0);
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        muteCharacteristic.setValue(value);
+        bluetoothGatt.writeCharacteristic(muteCharacteristic);
+    }
+
+    private void setGain(int gain) {
+        if (bluetoothGatt == null || aicsControlPointChar == null) {
+            Log.w(TAG, "Cannot set gain, GATT or characteristic not available.");
+            Toast.makeText(this, "Impossible de régler le gain.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        int properties = aicsControlPointChar.getProperties();
+        if ((properties & (BluetoothGattCharacteristic.PROPERTY_WRITE | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) == 0) {
+            Log.w(TAG, "AICS Control Point characteristic is not writable");
+            Toast.makeText(this, "Caractéristique de gain non accessible en écriture.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        byte[] value = new byte[2];
+        value[0] = 0x01; // Opcode for Set Gain Setting
+        value[1] = (byte) gain;
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        int writeType = (properties & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+                ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            bluetoothGatt.writeCharacteristic(aicsControlPointChar, value, writeType);
+        } else {
+            aicsControlPointChar.setWriteType(writeType);
+            aicsControlPointChar.setValue(value);
+            bluetoothGatt.writeCharacteristic(aicsControlPointChar);
+        }
+    }
 
     private void enableNotifications(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
         int properties = characteristic.getProperties();
@@ -185,7 +284,7 @@ public class MicrophoneActivity extends AppCompatActivity {
         }
     }
 
-    private void parseAndDisplay(byte[] data) {
+    private void parseAndDisplayMuteState(byte[] data) {
         if (data == null || data.length == 0) return;
         
         int mute = data[0] & 0xFF; // Mute is a uint8

@@ -72,6 +72,30 @@
                     android:gravity="end"/>
             </LinearLayout>
 
+            <!-- Mute/Unmute Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="8dp">
+
+                <Button
+                    android:id="@+id/mute_button"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Mute"/>
+
+                <Button
+                    android:id="@+id/unmute_button"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:text="Unmute"/>
+            </LinearLayout>
+
             <!-- Gain State -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -134,6 +158,27 @@
                     android:text="N/A"
                     android:textAppearance="?attr/textAppearanceBody1"
                     android:gravity="end"/>
+            </LinearLayout>
+
+            <!-- Gain Control -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Régler le gain"
+                    android:textAppearance="?attr/textAppearanceBody1"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/gain_seekbar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" />
             </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
