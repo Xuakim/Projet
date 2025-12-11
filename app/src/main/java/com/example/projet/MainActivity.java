@@ -13,22 +13,16 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
-import android.widget.ArrayAdapter;
-import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.nio.charset.StandardCharsets;
@@ -71,10 +65,8 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     private static final UUID AUDIO_INPUT_DESCRIPTION_UUID = UUID.fromString("00002B7C-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    // File d'attente pour les opérations de lecture/écriture GATT
     private final Queue<BluetoothGattCharacteristic> characteristicReadQueue = new LinkedList<>();
 
-    // Variables pour stocker les états des caractéristiques
     private String micMuteState = "N/A";
     private String micGainState = "N/A";
     private String micGainModeState = "N/A";
@@ -96,13 +88,7 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-            return insets;
-        });
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
@@ -123,13 +109,14 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
 
     @Override
     public void onDeviceClick(BluetoothDevice device) {
-        scanLeDevice(false); // Arrêter la recherche avant de se connecter
+        scanLeDevice(false);
         connectToDevice(device);
     }
 
     private void connectToDevice(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            runOnUiThread(() -> dataDisplay.setText("Connexion à " + (device.getName() != null ? device.getName() : "appareil inconnu") + "..."));
+            String deviceName = device.getName() != null ? device.getName() : "appareil inconnu";
+            runOnUiThread(() -> dataDisplay.setText("Connexion à " + deviceName + "..."));
             bluetoothGatt = device.connectGatt(this, false, gattCallback);
         }
     }
@@ -169,15 +156,12 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
         public void onScanResult(int callbackType, ScanResult result) {
             super.onScanResult(callbackType, result);
             BluetoothDevice device = result.getDevice();
-            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                return;
-            }
+            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
+            
             String deviceName = device.getName();
-            if (deviceName != null && !deviceName.isEmpty()) {
-                if (!discoveredBtDevices.contains(device)) {
-                    discoveredBtDevices.add(device);
-                    deviceListAdapter.notifyDataSetChanged();
-                }
+            if (deviceName != null && !deviceName.isEmpty() && !discoveredBtDevices.contains(device)) {
+                discoveredBtDevices.add(device);
+                runOnUiThread(() -> deviceListAdapter.notifyDataSetChanged());
             }
         }
     };
@@ -185,20 +169,21 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     private void checkAndRequestPermissions() {
         List<String> permissionsToRequest = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN);
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT);
-            }
+            permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN);
+            permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT);
         } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        }
+        
+        List<String> permissionsToRequestFiltered = new ArrayList<>();
+        for(String p : permissionsToRequest) {
+            if(ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequestFiltered.add(p);
             }
         }
 
-        if (!permissionsToRequest.isEmpty()) {
-            ActivityCompat.requestPermissions(this, permissionsToRequest.toArray(new String[0]), REQUEST_PERMISSIONS_CODE);
+        if (!permissionsToRequestFiltered.isEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsToRequestFiltered.toArray(new String[0]), REQUEST_PERMISSIONS_CODE);
         } else {
             enableBluetooth();
         }
@@ -207,14 +192,8 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     private void enableBluetooth() {
         if (!bluetoothAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    requestEnableBluetoothLauncher.launch(enableBtIntent);
-                } else {
-                    Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise.", Toast.LENGTH_LONG).show();
-                }
-            } else {
-                requestEnableBluetoothLauncher.launch(enableBtIntent);
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                 requestEnableBluetoothLauncher.launch(enableBtIntent);
             }
         } else {
             scanLeDevice(true);
@@ -224,17 +203,15 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_PERMISSIONS_CODE) {
-            boolean allPermissionsGranted = true;
-            for (int grantResult : grantResults) {
-                if (grantResult != PackageManager.PERMISSION_GRANTED) {
-                    allPermissionsGranted = false;
+        if (requestCode == REQUEST_PERMISSIONS_CODE && grantResults.length > 0) {
+            boolean allGranted = true;
+            for(int grantResult : grantResults) {
+                if(grantResult != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
                     break;
                 }
             }
-
-            if (allPermissionsGranted) {
-                Toast.makeText(this, "Permissions accordées.", Toast.LENGTH_SHORT).show();
+            if (allGranted) {
                 enableBluetooth();
             } else {
                 Toast.makeText(this, "Permissions Bluetooth refusées.", Toast.LENGTH_LONG).show();
@@ -242,7 +219,6 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
         }
     }
 
-    // Met à jour l'UI avec toutes les données collectées
     private void displayAllData() {
         final String formattedData = "--- État du Microphone ---\n" +
                 "Mute: " + micMuteState + "\n" +
@@ -252,11 +228,9 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
                 "Type d'entrée: " + micInputType + "\n" +
                 "Statut: " + micStatus + "\n" +
                 "Description: " + micDescription;
-
         runOnUiThread(() -> dataDisplay.setText(formattedData));
     }
 
-    // Active les notifications pour une caractéristique donnée
     private void setNotificationForCharacteristic(BluetoothGattCharacteristic characteristic, boolean enabled) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
         bluetoothGatt.setCharacteristicNotification(characteristic, enabled);
@@ -266,7 +240,6 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
             bluetoothGatt.writeDescriptor(descriptor);
         }
     }
-
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
@@ -288,80 +261,69 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS) return;
-
             BluetoothGattService service = gatt.getService(AICS_SERVICE_UUID);
             if (service == null) {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Service de microphone non trouvé", Toast.LENGTH_SHORT).show());
                 return;
             }
 
-            // Ajouter toutes les caractéristiques à lire dans la file d'attente
-            BluetoothGattCharacteristic gainPropertiesChar = service.getCharacteristic(GAIN_SETTING_PROPERTIES_UUID);
-            if (gainPropertiesChar != null) characteristicReadQueue.add(gainPropertiesChar);
-
-            BluetoothGattCharacteristic inputTypeChar = service.getCharacteristic(AUDIO_INPUT_TYPE_UUID);
-            if (inputTypeChar != null) characteristicReadQueue.add(inputTypeChar);
-
-            BluetoothGattCharacteristic inputStatusChar = service.getCharacteristic(AUDIO_INPUT_STATUS_UUID);
-            if (inputStatusChar != null) characteristicReadQueue.add(inputStatusChar);
-
-            BluetoothGattCharacteristic inputDescriptionChar = service.getCharacteristic(AUDIO_INPUT_DESCRIPTION_UUID);
-            if (inputDescriptionChar != null) characteristicReadQueue.add(inputDescriptionChar);
+            characteristicReadQueue.clear();
+            addCharacteristicToQueue(service, GAIN_SETTING_PROPERTIES_UUID);
+            addCharacteristicToQueue(service, AUDIO_INPUT_TYPE_UUID);
+            addCharacteristicToQueue(service, AUDIO_INPUT_STATUS_UUID);
+            addCharacteristicToQueue(service, AUDIO_INPUT_DESCRIPTION_UUID);
+            addCharacteristicToQueue(service, AUDIO_INPUT_STATE_UUID);
 
             BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
-            if (inputStateChar != null) characteristicReadQueue.add(inputStateChar);
-
-            // Commencer par s'abonner aux notifications pour l'état principal
             if (inputStateChar != null) {
                 setNotificationForCharacteristic(inputStateChar, true);
             } else {
-                // S'il n'y a pas de notif à activer, on commence les lectures
-                if (!characteristicReadQueue.isEmpty()) {
-                    if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
-                    gatt.readCharacteristic(characteristicReadQueue.poll());
-                }
+                 processReadQueue();
+            }
+        }
+
+        private void addCharacteristicToQueue(BluetoothGattService service, UUID charUuid) {
+            BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
+            if (characteristic != null) {
+                characteristicReadQueue.add(characteristic);
+            }
+        }
+
+        private void processReadQueue() {
+            if (!characteristicReadQueue.isEmpty()) {
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
+                bluetoothGatt.readCharacteristic(characteristicReadQueue.poll());
             }
         }
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-             // Une fois l'abonnement terminé, on commence à lire les caractéristiques en file d'attente
-            if (!characteristicReadQueue.isEmpty()) {
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
-                gatt.readCharacteristic(characteristicReadQueue.poll());
-            }
+            processReadQueue();
         }
         
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                parseCharacteristic(characteristic, value);
+                parseCharacteristic(characteristic);
             }
-
-            // Lire la caractéristique suivante dans la file
-            if (!characteristicReadQueue.isEmpty()) {
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
-                gatt.readCharacteristic(characteristicReadQueue.poll());
-            }
+            processReadQueue();
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            // Une caractéristique notifiée a changé
-            parseCharacteristic(characteristic, value);
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            parseCharacteristic(characteristic);
         }
 
-        private void parseCharacteristic(final BluetoothGattCharacteristic characteristic, final byte[] data) {
+        private void parseCharacteristic(final BluetoothGattCharacteristic characteristic) {
             UUID uuid = characteristic.getUuid();
+            byte[] data = characteristic.getValue();
             if (data == null) return;
 
             if (AUDIO_INPUT_STATE_UUID.equals(uuid) && data.length >= 3) {
-                final int gain = data[0]; // sint8
-                final int mute = data[1] & 0xFF; // uint8
-                final int gainMode = data[2] & 0xFF; // uint8
+                final int gain = data[0];
                 micGainState = gain + " dB";
-                micMuteState = (mute == 1) ? "Mute" : "Non Mute";
-                micGainModeState = (gainMode == 1) ? "Automatique" : "Manuel";
+                micMuteState = (data[1] & 0xFF) == 1 ? "Mute" : "Non Mute";
+                micGainModeState = (data[2] & 0xFF) == 1 ? "Automatique" : "Manuel";
             } else if (GAIN_SETTING_PROPERTIES_UUID.equals(uuid) && data.length >= 3) {
                 micGainProperties = String.format("Unit: %d, Min: %d, Max: %d", data[0] & 0xFF, data[1], data[2]);
             } else if (AUDIO_INPUT_TYPE_UUID.equals(uuid) && data.length > 0) {
