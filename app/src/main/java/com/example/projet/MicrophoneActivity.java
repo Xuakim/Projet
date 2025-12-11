@@ -157,7 +157,7 @@ public class MicrophoneActivity extends AppCompatActivity {
         public void onDescriptorWrite(final BluetoothGatt gatt, final BluetoothGattDescriptor descriptor, int status) {
             readNextWithDelay();
         }
-        
+
         @Override
         public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -165,7 +165,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             }
             readNextWithDelay();
         }
-        
+
         @Override
         @SuppressWarnings("deprecation")
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
@@ -176,7 +176,7 @@ public class MicrophoneActivity extends AppCompatActivity {
                 readNextWithDelay();
             }
         }
-        
+
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
             parseAndDisplay(characteristic, value);
