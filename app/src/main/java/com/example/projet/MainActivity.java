@@ -16,16 +16,12 @@ import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
@@ -58,13 +54,7 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-            return insets;
-        });
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
@@ -84,18 +74,16 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
 
     @Override
     public void onDeviceClick(BluetoothDevice device) {
-        scanLeDevice(false); // Arrêter la recherche avant de se connecter
+        scanLeDevice(false);
 
         Intent intent = new Intent(MainActivity.this, MicrophoneActivity.class);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            // This should have been granted already, but as a safeguard.
             Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise.", Toast.LENGTH_SHORT).show();
             return;
         }
         intent.putExtra("device_address", device.getAddress());
         intent.putExtra("device_name", device.getName());
         startActivity(intent);
-        overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
     }
 
     private void scanLeDevice(final boolean enable) {

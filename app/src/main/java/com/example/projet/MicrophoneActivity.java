@@ -10,12 +10,14 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -26,6 +28,9 @@ import java.util.Queue;
 import java.util.UUID;
 
 public class MicrophoneActivity extends AppCompatActivity {
+
+    public static final String EXTRA_DEVICE_ADDRESS = "device_address";
+    public static final String EXTRA_DEVICE_NAME = "device_name";
 
     // --- UUIDs for AICS Profile ---
     private static final UUID AICS_SERVICE_UUID = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
@@ -40,6 +45,8 @@ public class MicrophoneActivity extends AppCompatActivity {
     private final Queue<BluetoothGattCharacteristic> characteristicReadQueue = new LinkedList<>();
 
     // UI Elements
+    private TextView deviceNameTextView;
+    private TextView deviceAddressTextView;
     private TextView connectionStatusTextView;
     private TextView characteristicsDisplayTextView;
     private ProgressBar detailProgressBar;
@@ -58,21 +65,21 @@ public class MicrophoneActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_device_detail);
 
-        TextView deviceNameTextView = findViewById(R.id.device_name_detail);
-        TextView deviceAddressTextView = findViewById(R.id.device_address_detail);
+        deviceNameTextView = findViewById(R.id.device_name_detail);
+        deviceAddressTextView = findViewById(R.id.device_address_detail);
         connectionStatusTextView = findViewById(R.id.connection_status_detail);
         characteristicsDisplayTextView = findViewById(R.id.characteristics_display);
         detailProgressBar = findViewById(R.id.detail_progress_bar);
 
-        String deviceAddress = getIntent().getStringExtra("device_address");
-        String deviceName = getIntent().getStringExtra("device_name");
+        String deviceAddress = getIntent().getStringExtra(EXTRA_DEVICE_ADDRESS);
+        String deviceName = getIntent().getStringExtra(EXTRA_DEVICE_NAME);
 
         deviceNameTextView.setText(deviceName != null ? deviceName : "Appareil Inconnu");
         deviceAddressTextView.setText(deviceAddress);
 
         BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        if (bluetoothAdapter == null) {
-            Toast.makeText(this, "Bluetooth non supporté sur cet appareil.", Toast.LENGTH_SHORT).show();
+        if (bluetoothAdapter == null || deviceAddress == null) {
+            Toast.makeText(this, "Erreur: Adaptateur Bluetooth ou adresse non disponible.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
@@ -118,7 +125,6 @@ public class MicrophoneActivity extends AppCompatActivity {
             addCharacteristicToQueue(service, AUDIO_INPUT_DESCRIPTION_UUID);
             addCharacteristicToQueue(service, AUDIO_INPUT_STATE_UUID);
 
-            // Enable notifications first, then start reading the queue
             BluetoothGattCharacteristic inputStateChar = service.getCharacteristic(AUDIO_INPUT_STATE_UUID);
             if (inputStateChar != null) {
                 setNotificationForCharacteristic(inputStateChar, true);
@@ -126,25 +132,46 @@ public class MicrophoneActivity extends AppCompatActivity {
                 processReadQueue();
             }
         }
-        
+
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-            // Once notification is enabled, start reading the other characteristics
             processReadQueue();
         }
 
+        // Corrected callback for Android 13+
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+        public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                parseCharacteristic(characteristic);
+                parseCharacteristic(characteristic.getUuid(), value);
             }
-            processReadQueue(); // Read next characteristic in queue
+            processReadQueue();
         }
 
+        // Deprecated callback for older Android versions
         @Override
+        @SuppressWarnings("deprecation")
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    parseCharacteristic(characteristic.getUuid(), characteristic.getValue());
+                }
+                processReadQueue();
+            }
+        }
+
+        // Corrected callback for Android 13+
+        @Override
+        public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
+            parseCharacteristic(characteristic.getUuid(), value);
+        }
+
+        // Deprecated callback for older Android versions
+        @Override
+        @SuppressWarnings("deprecation")
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            // This is where you receive automatic updates
-            parseCharacteristic(characteristic);
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                parseCharacteristic(characteristic.getUuid(), characteristic.getValue());
+            }
         }
     };
 
@@ -174,9 +201,7 @@ public class MicrophoneActivity extends AppCompatActivity {
         }
     }
 
-    private void parseCharacteristic(final BluetoothGattCharacteristic characteristic) {
-        UUID uuid = characteristic.getUuid();
-        byte[] data = characteristic.getValue();
+    private void parseCharacteristic(final UUID uuid, final byte[] data) {
         if (data == null) return;
 
         if (AUDIO_INPUT_STATE_UUID.equals(uuid) && data.length >= 3) {
@@ -201,7 +226,7 @@ public class MicrophoneActivity extends AppCompatActivity {
                 "Gain: " + micGainState + "\n" +
                 "Mode de gain: " + micGainModeState + "\n" +
                 "Propriétés de gain: " + micGainProperties + "\n" +
-                "Type d\'entrée: " + micInputType + "\n" +
+                "Type d'entrée: " + micInputType + "\n" +
                 "Statut: " + micStatus + "\n" +
                 "Description: " + micDescription;
         runOnUiThread(() -> {
