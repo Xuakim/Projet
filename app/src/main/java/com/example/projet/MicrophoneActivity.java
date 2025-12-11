@@ -157,7 +157,7 @@ public class MicrophoneActivity extends AppCompatActivity {
         public void onDescriptorWrite(final BluetoothGatt gatt, final BluetoothGattDescriptor descriptor, int status) {
             readNextWithDelay();
         }
-
+        
         @Override
         public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -165,7 +165,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             }
             readNextWithDelay();
         }
-
+        
         @Override
         @SuppressWarnings("deprecation")
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
@@ -176,7 +176,7 @@ public class MicrophoneActivity extends AppCompatActivity {
                 readNextWithDelay();
             }
         }
-
+        
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
             parseAndDisplay(characteristic, value);
@@ -251,11 +251,11 @@ public class MicrophoneActivity extends AppCompatActivity {
                         muteIcon.setImageResource(mute == 0 ? R.drawable.ic_mic : R.drawable.ic_mic_off);
                     }
                 } else if (UUID_AUDIO_INPUT_TYPE.equals(uuid) && data.length > 0) {
-                    micTypeView.setText(audioInputTypeLabel(data[0] & 0xFF));
+                    micTypeView.setText(String.format("Type : %s", audioInputTypeLabel(data[0] & 0xFF)));
                 } else if (UUID_AUDIO_INPUT_STATUS.equals(uuid) && data.length > 0) {
-                     micStatusView.setText((data[0] & 0xFF) == 1 ? "Actif" : "Inactif");
+                     micStatusView.setText(String.format("Statut : %s", (data[0] & 0xFF) == 1 ? "Actif" : "Inactif"));
                 } else if (UUID_AUDIO_INPUT_DESCRIPTION.equals(uuid)) {
-                    micDescriptionView.setText(new String(data, StandardCharsets.UTF_8));
+                    micDescriptionView.setText(String.format("Description : %s", new String(data, StandardCharsets.UTF_8)));
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error parsing characteristic " + uuid, e);
