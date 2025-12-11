@@ -18,8 +18,8 @@
 
     <TextView
         android:id="@+id/data_display"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:gravity="center"
         android:padding="16dp"
         android:text="En attente de données..."
