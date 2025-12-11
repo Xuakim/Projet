@@ -336,12 +336,29 @@ public class MainActivity extends AppCompatActivity {
             gatt.readCharacteristic(characteristic);
         }
 
+        // Callback pour Android < 13
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) return;
-            handleCharacteristicValue(characteristic.getUuid(), value);
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                handleCharacteristicValue(characteristic.getUuid(), characteristic.getValue());
+            }
         }
 
+        // Callback pour Android >= 13
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                handleCharacteristicValue(characteristic.getUuid(), value);
+            }
+        }
+
+        // Callback pour Android < 13
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            handleCharacteristicValue(characteristic.getUuid(), characteristic.getValue());
+        }
+
+        // Callback pour Android >= 13
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
             handleCharacteristicValue(characteristic.getUuid(), value);
@@ -352,7 +369,25 @@ public class MainActivity extends AppCompatActivity {
             String info = "";
 
             if (MIC_MUTE_UUID.equals(uuid)) {
-                info = (data.length > 0 && data[0] == 1) ? "Muet" : "Non muet";
+                if (data.length > 0) {
+                    int muteValue = data[0];
+                    switch (muteValue) {
+                        case 0:
+                            info = "Non muet";
+                            break;
+                        case 1:
+                            info = "Muet";
+                            break;
+                        case 2:
+                            info = "Sourdine désactivée";
+                            break;
+                        default:
+                            info = "Valeur inconnue: " + muteValue;
+                            break;
+                    }
+                } else {
+                    info = "Données vides";
+                }
             } else if (AUDIO_INPUT_STATE_UUID.equals(uuid)) {
                 if (data.length >= 3) {
                     int gain = data[0];
