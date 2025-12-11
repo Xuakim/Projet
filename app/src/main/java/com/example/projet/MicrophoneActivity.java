@@ -138,7 +138,6 @@ public class MicrophoneActivity extends AppCompatActivity {
             processReadQueue();
         }
 
-        // Corrected callback for Android 13+
         @Override
         public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -147,7 +146,6 @@ public class MicrophoneActivity extends AppCompatActivity {
             processReadQueue();
         }
 
-        // Deprecated callback for older Android versions
         @Override
         @SuppressWarnings("deprecation")
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
@@ -159,13 +157,11 @@ public class MicrophoneActivity extends AppCompatActivity {
             }
         }
 
-        // Corrected callback for Android 13+
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, @NonNull byte[] value) {
             parseCharacteristic(characteristic.getUuid(), value);
         }
 
-        // Deprecated callback for older Android versions
         @Override
         @SuppressWarnings("deprecation")
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
@@ -176,11 +172,14 @@ public class MicrophoneActivity extends AppCompatActivity {
     };
 
     private void processReadQueue() {
-        if (!characteristicReadQueue.isEmpty()) {
-            BluetoothGattCharacteristic characteristic = characteristicReadQueue.poll();
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                bluetoothGatt.readCharacteristic(characteristic);
-            }
+        if (characteristicReadQueue.isEmpty()) return;
+        
+        BluetoothGattCharacteristic characteristic = characteristicReadQueue.poll();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
+        
+        if (!bluetoothGatt.readCharacteristic(characteristic)) {
+            // If the read fails to initiate, try the next one in the queue.
+            processReadQueue();
         }
     }
 
@@ -198,6 +197,8 @@ public class MicrophoneActivity extends AppCompatActivity {
         if (descriptor != null) {
             descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
             bluetoothGatt.writeDescriptor(descriptor);
+        } else {
+            processReadQueue();
         }
     }
 
