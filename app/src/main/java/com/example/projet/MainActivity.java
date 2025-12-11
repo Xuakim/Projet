@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
@@ -46,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
     private ArrayAdapter<String> deviceListAdapter;
     private final List<String> discoveredDevices = new ArrayList<>();
     private BluetoothGatt bluetoothGatt;
+    private TextView dataDisplay;
 
     // UUIDs pour le service de contrôle d'entrée audio (Microphone Profile)
     // Remplacer si votre appareil utilise des UUIDs personnalisés.
@@ -88,6 +90,7 @@ public class MainActivity extends AppCompatActivity {
         deviceListView = findViewById(R.id.device_list);
         deviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, discoveredDevices);
         deviceListView.setAdapter(deviceListAdapter);
+        dataDisplay = findViewById(R.id.data_display);
 
         deviceListView.setOnItemClickListener((parent, view, position, id) -> {
             String deviceInfo = discoveredDevices.get(position);
@@ -289,7 +292,7 @@ public class MainActivity extends AppCompatActivity {
                     stringBuilder.append(String.format("%02X ",
                             byteChar));
                 }
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Données reçues: " + stringBuilder.toString(), Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> dataDisplay.setText("Données reçues: " + stringBuilder.toString()));
             }
         }
     };
