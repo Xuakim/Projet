@@ -127,6 +127,7 @@ public class MicrophoneActivity extends AppCompatActivity {
             super.onServicesDiscovered(gatt, status);
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "Service discovery failed: " + status);
+                runOnUiThread(() -> progressBar.setVisibility(View.GONE));
                 return;
             }
 
@@ -135,6 +136,10 @@ public class MicrophoneActivity extends AppCompatActivity {
 
             if (service == null) {
                 Log.w(TAG, "Neither AICS nor MICP found");
+                 runOnUiThread(() -> {
+                    Toast.makeText(MicrophoneActivity.this, "Service Microphone non trouvé.", Toast.LENGTH_LONG).show();
+                    progressBar.setVisibility(View.GONE);
+                });
                 return;
             }
 
@@ -227,8 +232,12 @@ public class MicrophoneActivity extends AppCompatActivity {
         BluetoothGattDescriptor cccd = characteristic.getDescriptor(CCCD_UUID);
         if (cccd != null) {
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            gatt.writeDescriptor(cccd);
+            if (!gatt.writeDescriptor(cccd)) {
+                Log.w(TAG, "Failed to write CCCD descriptor for " + characteristic.getUuid());
+                readNextWithDelay();
+            }
         } else {
+            Log.w(TAG, "CCCD descriptor not found for characteristic " + characteristic.getUuid());
             readNextWithDelay();
         }
     }
