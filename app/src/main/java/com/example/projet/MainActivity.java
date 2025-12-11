@@ -22,7 +22,6 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -33,11 +32,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.android.material.switchmaterial.SwitchMaterial;
-
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.UUID;
 
@@ -56,14 +55,12 @@ public class MainActivity extends AppCompatActivity {
     private static final UUID AUDIO_INPUT_DESCRIPTION_UUID = UUID.fromString("00002b7c-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    // --- UI Elements ---
+    // --- UI & Data ---
     private ListView deviceListView;
     private ArrayAdapter<String> deviceListAdapter;
     private final List<String> discoveredDevices = new ArrayList<>();
-    private ScrollView controlsScrollView;
-    private SwitchMaterial switchMicMute;
-    private TextView tvAudioDescription;
-    private TextView tvAudioState;
+    private TextView dataDisplay;
+    private final Map<String, String> characteristicValues = new LinkedHashMap<>();
 
     // --- BLE Command Queue ---
     private final Queue<Runnable> commandQueue = new LinkedList<>();
@@ -92,15 +89,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Initialize UI components
         deviceListView = findViewById(R.id.device_list);
-        controlsScrollView = findViewById(R.id.controls_scroll_view);
-        switchMicMute = findViewById(R.id.switch_mic_mute);
-        tvAudioDescription = findViewById(R.id.tv_audio_description);
-        tvAudioState = findViewById(R.id.tv_audio_state);
-
         deviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, discoveredDevices);
         deviceListView.setAdapter(deviceListAdapter);
+        dataDisplay = findViewById(R.id.data_display);
 
         deviceListView.setOnItemClickListener((parent, view, position, id) -> {
             String deviceInfo = discoveredDevices.get(position);
@@ -108,82 +100,8 @@ public class MainActivity extends AppCompatActivity {
             connectToDevice(bluetoothAdapter.getRemoteDevice(deviceAddress));
         });
 
-        switchMicMute.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (buttonView.isPressed()) { // Only react to user interaction
-                byte[] value = new byte[]{(byte) (isChecked ? 1 : 0)};
-                commandQueue.add(() -> writeCharacteristic(bluetoothGatt, MIC_CONTROL_SERVICE_UUID, MIC_MUTE_UUID, value));
-                processNextCommand();
-            }
-        });
-
         registerReceiver(discoveryReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
         checkAndRequestPermissions();
-    }
-
-    private void writeCharacteristic(BluetoothGatt bluetoothGatt, UUID micControlServiceUuid, UUID micMuteUuid, byte[] value) {
-        if (bluetoothGatt == null) {
-            Log.e(TAG, "writeCharacteristic: bluetoothGatt null");
-            signalCommandProcessed();
-            return;
-        }
-        if (micControlServiceUuid == null || micMuteUuid == null) {
-            Log.e(TAG, "writeCharacteristic: uuid null");
-            signalCommandProcessed();
-            return;
-        }
-
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "writeCharacteristic: missing BLUETOOTH_CONNECT permission");
-            signalCommandProcessed();
-            return;
-        }
-
-        BluetoothGattService service = bluetoothGatt.getService(micControlServiceUuid);
-        if (service == null) {
-            Log.e(TAG, "writeCharacteristic: service not found " + micControlServiceUuid);
-            signalCommandProcessed();
-            return;
-        }
-
-        BluetoothGattCharacteristic characteristic = service.getCharacteristic(micMuteUuid);
-        if (characteristic == null) {
-            Log.e(TAG, "writeCharacteristic: characteristic not found " + micMuteUuid);
-            signalCommandProcessed();
-            return;
-        }
-
-        if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0
-                && (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0) {
-            Log.e(TAG, "writeCharacteristic: characteristic not writable " + micMuteUuid);
-            signalCommandProcessed();
-            return;
-        }
-
-        // Use modern API on TIRAMISU+ which returns request id (int)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                int req = bluetoothGatt.writeCharacteristic(characteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-                Log.d(TAG, "writeCharacteristic (new API) requestId=" + req + " for " + micMuteUuid);
-                if (req <= 0) {
-                    Log.e(TAG, "writeCharacteristic: request start failed (requestId=" + req + ")");
-                    signalCommandProcessed();
-                }
-            } else {
-                characteristic.setValue(value);
-                boolean started = bluetoothGatt.writeCharacteristic(characteristic);
-                Log.d(TAG, "writeCharacteristic (legacy) started=" + started + " for " + micMuteUuid);
-                if (!started) {
-                    Log.e(TAG, "writeCharacteristic: start failed");
-                    signalCommandProcessed();
-                }
-            }
-        } catch (SecurityException e) {
-            Log.e(TAG, "writeCharacteristic: SecurityException", e);
-            signalCommandProcessed();
-        } catch (Exception e) {
-            Log.e(TAG, "writeCharacteristic: Exception", e);
-            signalCommandProcessed();
-        }
     }
 
     private void checkAndRequestPermissions() {
@@ -249,24 +167,54 @@ public class MainActivity extends AppCompatActivity {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
             if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
         }
-        runOnUiThread(() -> {
-            deviceListView.setVisibility(View.GONE);
-            controlsScrollView.setVisibility(View.VISIBLE);
-            Toast.makeText(this, "Connexion à " + device.getAddress() + "...", Toast.LENGTH_SHORT).show();
-        });
+        deviceListView.setVisibility(View.GONE);
+        dataDisplay.setVisibility(View.VISIBLE);
+        dataDisplay.setText("Connexion à " + device.getAddress() + "...");
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             bluetoothGatt = device.connectGatt(this, false, gattCallback);
         }
     }
 
+    private String getCharacteristicName(UUID uuid) {
+        if (MIC_MUTE_UUID.equals(uuid)) return "Mic Mute";
+        if (AUDIO_INPUT_DESCRIPTION_UUID.equals(uuid)) return "Audio Input Description";
+        if (AUDIO_INPUT_STATE_UUID.equals(uuid)) return "Audio Input State";
+        return "Unknown Characteristic";
+    }
+
+    private void initializeCharacteristicsMap() {
+        characteristicValues.clear();
+        characteristicValues.put(getCharacteristicName(MIC_MUTE_UUID), "En attente...");
+        characteristicValues.put(getCharacteristicName(AUDIO_INPUT_DESCRIPTION_UUID), "En attente...");
+        characteristicValues.put(getCharacteristicName(AUDIO_INPUT_STATE_UUID), "En attente...");
+        updateDataDisplay();
+    }
+
+    private void updateDataDisplay() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : characteristicValues.entrySet()) {
+            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n\n");
+        }
+        runOnUiThread(() -> dataDisplay.setText(sb.toString()));
+    }
+
     private synchronized void processNextCommand() {
         if (isCommandQueueProcessing) return;
-        if (commandQueue.isEmpty()) return;
+        if (commandQueue.isEmpty()) {
+            Log.d(TAG, "File de commandes vide.");
+            return;
+        }
         isCommandQueueProcessing = true;
-        mainHandler.post(commandQueue.poll());
+        Runnable cmd = commandQueue.poll();
+        if (cmd != null) {
+            cmd.run();
+        } else {
+            isCommandQueueProcessing = false; 
+        }
     }
 
     private synchronized void signalCommandProcessed() {
+        Log.d(TAG, "Commande terminée, passage à la suivante.");
         isCommandQueueProcessing = false;
         processNextCommand();
     }
@@ -278,6 +226,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG, "Connecté au serveur GATT.");
                 commandQueue.clear();
                 isCommandQueueProcessing = false;
+                runOnUiThread(() -> initializeCharacteristicsMap());
                 mainHandler.postDelayed(() -> {
                     if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                         gatt.discoverServices();
@@ -288,38 +237,67 @@ public class MainActivity extends AppCompatActivity {
                 commandQueue.clear();
                 isCommandQueueProcessing = false;
                 runOnUiThread(() -> {
+                    dataDisplay.setText("Déconnecté.");
                     deviceListView.setVisibility(View.VISIBLE);
-                    controlsScrollView.setVisibility(View.GONE);
                 });
             }
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) return;
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.e(TAG, "onServicesDiscovered a échoué avec le statut: " + status);
+                return;
+            }
+            logAllServices(gatt);
 
+            // --- Enqueue Commands for Services ---
+
+            // Microphone Control Service
             BluetoothGattService micService = gatt.getService(MIC_CONTROL_SERVICE_UUID);
             if (micService != null) {
                 commandQueue.add(() -> subscribeToCharacteristic(gatt, micService.getCharacteristic(MIC_MUTE_UUID)));
+            } else {
+                runOnUiThread(() -> characteristicValues.put(getCharacteristicName(MIC_MUTE_UUID), "Service non trouvé"));
             }
+
+            // Audio Input Control Service
             BluetoothGattService audioService = gatt.getService(AUDIO_INPUT_CONTROL_SERVICE_UUID);
             if (audioService != null) {
                 commandQueue.add(() -> readCharacteristic(gatt, audioService.getCharacteristic(AUDIO_INPUT_DESCRIPTION_UUID)));
                 commandQueue.add(() -> subscribeToCharacteristic(gatt, audioService.getCharacteristic(AUDIO_INPUT_STATE_UUID)));
+            } else {
+                runOnUiThread(() -> {
+                    characteristicValues.put(getCharacteristicName(AUDIO_INPUT_DESCRIPTION_UUID), "Service non trouvé");
+                    characteristicValues.put(getCharacteristicName(AUDIO_INPUT_STATE_UUID), "Service non trouvé");
+                });
             }
+
+            updateDataDisplay();
             processNextCommand();
         }
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d(TAG, "Abonnement OK pour: " + descriptor.getCharacteristic().getUuid());
                 commandQueue.add(() -> readCharacteristic(gatt, descriptor.getCharacteristic()));
+            } else {
+                Log.e(TAG, "onDescriptorWrite a échoué pour " + descriptor.getCharacteristic().getUuid() + " avec le statut: " + status);
             }
             signalCommandProcessed();
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) { // Deprecated
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                handleCharacteristicValue(characteristic.getUuid(), characteristic.getValue());
+            }
+            signalCommandProcessed();
+        }
+
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) { // New
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 handleCharacteristicValue(characteristic.getUuid(), value);
             }
@@ -327,26 +305,29 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            handleCharacteristicValue(characteristic.getUuid(), value);
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) { // Deprecated
+            handleCharacteristicValue(characteristic.getUuid(), characteristic.getValue());
         }
-        
+
         @Override
-        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            if(status == BluetoothGatt.GATT_SUCCESS) {
-                 Log.d(TAG, "Ecriture OK pour " + characteristic.getUuid());
-            } else {
-                 Log.e(TAG, "Ecriture échouée pour " + characteristic.getUuid() + " statut: " + status);
-            }
-            signalCommandProcessed();
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) { // New
+            handleCharacteristicValue(characteristic.getUuid(), value);
         }
 
         private void subscribeToCharacteristic(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            if (characteristic == null) { signalCommandProcessed(); return; }
-            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) { signalCommandProcessed(); return; }
+            if (characteristic == null) {
+                Log.e(TAG, "Tentative d'abonnement à une caractéristique NULLE.");
+                signalCommandProcessed(); return;
+            }
+            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                 signalCommandProcessed(); return;
+            }
             gatt.setCharacteristicNotification(characteristic, true);
             BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
-            if (descriptor == null) { signalCommandProcessed(); return; }
+            if (descriptor == null) {
+                Log.e(TAG, "CCCD non trouvé pour " + characteristic.getUuid());
+                signalCommandProcessed(); return;
+            }
             byte[] value = (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
                     ? BluetoothGattDescriptor.ENABLE_INDICATION_VALUE : BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -358,48 +339,65 @@ public class MainActivity extends AppCompatActivity {
         }
 
         private void readCharacteristic(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            if (characteristic == null || (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
-                 signalCommandProcessed(); return; 
+            if (characteristic == null) {
+                signalCommandProcessed(); return;
+            }
+            if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
+                 Log.w(TAG, "Caractéristique non lisible: " + characteristic.getUuid());
+                 signalCommandProcessed(); return;
             }
             if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                 signalCommandProcessed(); return; 
+                 signalCommandProcessed(); return;
             }
+            Log.d(TAG, "Demande de lecture pour " + characteristic.getUuid());
             gatt.readCharacteristic(characteristic);
-        }
-
-        private void writeCharacteristic(BluetoothGatt gatt, UUID serviceUuid, UUID charUuid, byte[] value) {
-             if (gatt == null) { signalCommandProcessed(); return; }
-             BluetoothGattService service = gatt.getService(serviceUuid);
-             if (service == null) { signalCommandProcessed(); return; }
-             BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
-             if (characteristic == null || (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
-                  signalCommandProcessed(); return; 
-             }
-             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                 gatt.writeCharacteristic(characteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-             } else {
-                 characteristic.setValue(value);
-                 gatt.writeCharacteristic(characteristic);
-             }
         }
 
         private void handleCharacteristicValue(UUID uuid, byte[] data) {
             if (data == null) return;
+            String info = "Données inconnues";
+            String key = getCharacteristicName(uuid);
 
             if (MIC_MUTE_UUID.equals(uuid)) {
                 if (data.length > 0) {
-                    boolean isMuted = data[0] == 1;
-                    runOnUiThread(() -> switchMicMute.setChecked(isMuted));
+                    switch (data[0] & 0xFF) {
+                        case 0: info = "Non muet"; break;
+                        case 1: info = "Muet"; break;
+                        case 2: info = "Sourdine désactivée"; break;
+                        default: info = "Valeur inconnue: " + (data[0] & 0xFF); break;
+                    }
                 }
             } else if (AUDIO_INPUT_DESCRIPTION_UUID.equals(uuid)) {
-                String description = new String(data);
-                runOnUiThread(() -> tvAudioDescription.setText(description));
+                info = new String(data);
             } else if (AUDIO_INPUT_STATE_UUID.equals(uuid)) {
                 if (data.length >= 3) {
-                    String state = String.format("Gain:%d, Mute:%s, Mode:%s", (data[0] & 0xFF), (data[1] == 1 ? "Muet" : "Non muet"), (data[2] == 0 ? "Manual" : "Auto"));
-                    runOnUiThread(() -> tvAudioState.setText(state));
+                    info = String.format("Gain:%d, Mute:%s, Mode:%s", (data[0] & 0xFF), (data[1] == 1 ? "Muet" : "Non muet"), (data[2] == 0 ? "Manual" : "Auto"));
                 }
             }
+
+            characteristicValues.put(key, info);
+            updateDataDisplay();
+        }
+
+        private void logAllServices(BluetoothGatt gatt) {
+            if (gatt == null) return;
+            Log.d(TAG, "--- Début de la liste des services ---");
+            for (BluetoothGattService service : gatt.getServices()) {
+                Log.d(TAG, "Service trouvé: " + service.getUuid());
+                for (BluetoothGattCharacteristic characteristic : service.getCharacteristics()) {
+                    Log.d(TAG, "  -> Caractéristique: " + characteristic.getUuid() + " | Propriétés: " + getProperties(characteristic));
+                }
+            }
+            Log.d(TAG, "--- Fin de la liste des services ---");
+        }
+
+        private String getProperties(BluetoothGattCharacteristic c) {
+            List<String> props = new ArrayList<>();
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) != 0) props.add("READ");
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) props.add("WRITE");
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) props.add("NOTIFY");
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) props.add("INDICATE");
+            return String.join(", ", props);
         }
     };
 
