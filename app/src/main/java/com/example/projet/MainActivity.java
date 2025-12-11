@@ -115,8 +115,12 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
 
     private void connectToDevice(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            String deviceName = device.getName() != null ? device.getName() : "appareil inconnu";
-            runOnUiThread(() -> dataDisplay.setText("Connexion à " + deviceName + "..."));
+            String deviceName = "appareil inconnu";
+            if (device.getName() != null) {
+                deviceName = device.getName();
+            }
+            final String finalDeviceName = deviceName;
+            runOnUiThread(() -> dataDisplay.setText("Connexion à " + finalDeviceName + "..."));
             bluetoothGatt = device.connectGatt(this, false, gattCallback);
         }
     }
@@ -194,6 +198,8 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                  requestEnableBluetoothLauncher.launch(enableBtIntent);
+            } else {
+                Toast.makeText(this, "Connect permission is required to enable Bluetooth", Toast.LENGTH_LONG).show();
             }
         } else {
             scanLeDevice(true);
