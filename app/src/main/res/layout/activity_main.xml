@@ -25,27 +25,4 @@
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
         tools:listitem="@layout/list_item_device" />
 
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/data_card"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_margin="8dp"
-        app:cardElevation="4dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                android:id="@+id/data_display"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="En attente de connexion..."
-                android:textAppearance="?attr/textAppearanceBody1" />
-
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
-
 </LinearLayout>
