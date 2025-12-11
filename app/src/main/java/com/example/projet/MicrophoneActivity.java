@@ -135,7 +135,6 @@ public class MicrophoneActivity extends AppCompatActivity {
             return;
         }
         
-        // Use the modern write API for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             bluetoothGatt.writeCharacteristic(muteCharacteristic, newValue, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         } else {
@@ -313,13 +312,18 @@ public class MicrophoneActivity extends AppCompatActivity {
 
     private void enableNotifications(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return;
-
-        gatt.setCharacteristicNotification(characteristic, true);
-        BluetoothGattDescriptor cccd = characteristic.getDescriptor(CCCD_UUID);
-        if (cccd != null) {
-            cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            gatt.writeDescriptor(cccd);
-        } else {
+        try {
+            gatt.setCharacteristicNotification(characteristic, true);
+            BluetoothGattDescriptor cccd = characteristic.getDescriptor(CCCD_UUID);
+            if (cccd != null) {
+                cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                gatt.writeDescriptor(cccd);
+            } else {
+                readNextWithDelay();
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Failed to set notification for " + characteristic.getUuid() + " due to security exception.", e);
+            // Continue the read queue even if notifications fail
             readNextWithDelay();
         }
     }
