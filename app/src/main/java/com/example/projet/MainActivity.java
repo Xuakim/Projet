@@ -3,125 +3,86 @@ package com.example.projet;
 import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
-import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
 import java.util.ArrayList;
-import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final int REQUEST_PERMISSIONS_CODE = 123;
+    private static final int REQUEST_PERMISSIONS = 1;
+
     private BluetoothAdapter bluetoothAdapter;
-
-    private ListView deviceListView;
-    private ArrayAdapter<String> deviceListAdapter;
-    private final List<String> discoveredDevices = new ArrayList<>();
-    private TextView dataDisplay;
-
-    private BleManager bleManager;
+    private BluetoothLeScanner bluetoothLeScanner;
+    private final ArrayList<BluetoothDevice> deviceList = new ArrayList<>();
+    private DeviceListAdapter deviceListAdapter;
     private UiController uiController;
-
-    private final ActivityResultLauncher<android.content.Intent> requestEnableBluetoothLauncher =
-            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (result.getResultCode() == RESULT_OK) {
-                    startDiscovery();
-                } else {
-                    Toast.makeText(this, "L'activation du Bluetooth a été refusée.", Toast.LENGTH_SHORT).show();
-                }
-            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        if (bluetoothAdapter == null) {
-            Toast.makeText(this, "Cet appareil ne supporte pas le Bluetooth.", Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        deviceListView = findViewById(R.id.device_list);
-        deviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, discoveredDevices);
-        deviceListView.setAdapter(deviceListAdapter);
-        dataDisplay = findViewById(R.id.data_display);
-
+        TextView dataDisplay = findViewById(R.id.dataDisplay);
+        ListView deviceListView = findViewById(R.id.deviceListView);
         uiController = new UiController(this, dataDisplay, deviceListView);
-        bleManager = new BleManager(this, uiController);
 
-        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
-            String deviceInfo = discoveredDevices.get(position);
-            String deviceAddress = deviceInfo.substring(deviceInfo.length() - 17);
-            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(deviceAddress);
-            bleManager.connectToDevice(device);
-            deviceListView.setVisibility(View.GONE);
-            dataDisplay.setVisibility(View.VISIBLE);
-            dataDisplay.setText("Connexion à " + device.getAddress() + "...");
-        });
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
 
-        checkAndRequestPermissions();
+        deviceListAdapter = new DeviceListAdapter(this, deviceList);
+        deviceListView.setAdapter(deviceListAdapter);
+
+        checkPermissionsAndStartScan();
     }
 
-    private void checkAndRequestPermissions() {
+    private void checkPermissionsAndStartScan() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED ||
+                    ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this,
-                        new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN},
-                        REQUEST_PERMISSIONS_CODE);
-            } else {
-                enableBluetooth();
+                        new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_FINE_LOCATION},
+                        REQUEST_PERMISSIONS);
+                return;
             }
-        } else {
-            enableBluetooth();
         }
+        startBleScan();
     }
 
-    private void enableBluetooth() {
-        if (!bluetoothAdapter.isEnabled()) {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                requestEnableBluetoothLauncher.launch(new android.content.Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
-            }
-        } else {
-            startDiscovery();
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_PERMISSIONS_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            enableBluetooth();
-        }
-    }
-
-    private void startDiscovery() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) return;
-        if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
-        discoveredDevices.clear();
+    private void startBleScan() {
+        deviceList.clear();
         deviceListAdapter.notifyDataSetChanged();
-        bluetoothAdapter.startDiscovery();
+        bluetoothLeScanner.startScan(scanCallback);
+        uiController.showMessage("Scan en cours...");
     }
 
+    private final ScanCallback scanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, @NonNull ScanResult result) {
+            BluetoothDevice device = result.getDevice();
+            if (!deviceList.contains(device)) {
+                deviceList.add(device);
+                deviceListAdapter.notifyDataSetChanged();
+            }
+        }
+    };
+
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        bleManager.disconnect();
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        if (requestCode == REQUEST_PERMISSIONS) {
+            checkPermissionsAndStartScan();
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.example.projet;
 
 import android.app.Activity;
+import android.view.View;
 import android.widget.ListView;
 import android.widget.TextView;
 
@@ -34,16 +35,15 @@ public class UiController {
     // --- Contrôle visibilité ---
     public void showDeviceList() {
         activity.runOnUiThread(() -> {
-            deviceListView.setVisibility(android.view.View.VISIBLE);
-            dataDisplay.setVisibility(android.view.View.GONE);
+            deviceListView.setVisibility(View.VISIBLE);
+            dataDisplay.setVisibility(View.GONE);
         });
     }
 
     public void showDataDisplay() {
         activity.runOnUiThread(() -> {
-            deviceListView.setVisibility(android.view.View.GONE);
-            dataDisplay.setVisibility(android.view.View.VISIBLE);
+            deviceListView.setVisibility(View.GONE);
+            dataDisplay.setVisibility(View.VISIBLE);
         });
     }
 }
-

@@ -8,7 +8,7 @@
     tools:context=".MainActivity">
 
     <ListView
-        android:id="@+id/device_list"
+        android:id="@+id/deviceListView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintBottom_toBottomOf="parent"
@@ -17,7 +17,7 @@
         app:layout_constraintTop_toTopOf="parent" />
 
     <TextView
-        android:id="@+id/data_display"
+        android:id="@+id/dataDisplay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:gravity="center"

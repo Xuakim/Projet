@@ -1,17 +1,20 @@
 package com.example.projet;
 
-import com.example.projet.MicServiceHandler;
-import com.example.projet.AudioInputServiceHandler;
-import com.example.projet.UiController;
+import android.Manifest;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.util.Log;
 
-import java.util.UUID;
+import androidx.core.app.ActivityCompat;
+
+import com.example.projet.AudioInputServiceHandler;
+import com.example.projet.MicServiceHandler;
+import com.example.projet.UiController;
 
 public class BleManager {
 
@@ -27,17 +30,23 @@ public class BleManager {
     public BleManager(Context context, UiController uiController) {
         this.context = context;
         this.uiController = uiController;
-        this.micHandler = new MicServiceHandler(this, uiController);
-        this.audioHandler = new AudioInputServiceHandler(this, uiController);
+        this.micHandler = new MicServiceHandler(context, uiController);
+        this.audioHandler = new AudioInputServiceHandler(context, uiController);
     }
 
     // --- Connexion ---
     public void connectToDevice(BluetoothDevice device) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
         bluetoothGatt = device.connectGatt(context, false, gattCallback);
     }
 
     public void disconnect() {
         if (bluetoothGatt != null) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
             bluetoothGatt.close();
             bluetoothGatt = null;
         }
@@ -49,6 +58,9 @@ public class BleManager {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
                 Log.d(TAG, "Connecté au serveur GATT.");
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    return;
+                }
                 gatt.discoverServices();
                 uiController.showMessage("Connecté, découverte des services...");
             } else if (newState == android.bluetooth.BluetoothProfile.STATE_DISCONNECTED) {
@@ -72,9 +84,8 @@ public class BleManager {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
-                                            BluetoothGattCharacteristic characteristic,
-                                            byte[] value) {
-            UUID uuid = characteristic.getUuid();
+                                            BluetoothGattCharacteristic characteristic) {
+            final byte[] value = characteristic.getValue();
             micHandler.handleCharacteristic(characteristic, value);
             audioHandler.handleCharacteristic(characteristic, value);
         }

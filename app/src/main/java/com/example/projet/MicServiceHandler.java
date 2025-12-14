@@ -4,7 +4,7 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
-import android.os.Build;
+import android.content.Context;
 import android.util.Log;
 
 import java.util.UUID;
@@ -18,11 +18,11 @@ public class MicServiceHandler {
     private static final UUID MIC_MUTE_UUID   = UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID       = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    private final BleManager bleManager;
+    private final Context context;
     private final UiController uiController;
 
-    public MicServiceHandler(BleManager bleManager, UiController uiController) {
-        this.bleManager = bleManager;
+    public MicServiceHandler(Context context, UiController uiController) {
+        this.context = context;
         this.uiController = uiController;
     }
 
@@ -43,6 +43,13 @@ public class MicServiceHandler {
 
     // --- Abonnement aux notifications ---
     private void subscribeToMuteCharacteristic(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+        // Vérifier permission BLUETOOTH_CONNECT
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Permission BLUETOOTH_CONNECT non accordée, abonnement ignoré");
+            return;
+        }
+
         gatt.setCharacteristicNotification(characteristic, true);
         BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
         if (descriptor != null) {
@@ -50,12 +57,8 @@ public class MicServiceHandler {
             if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) {
                 value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeDescriptor(descriptor, value);
-            } else {
-                descriptor.setValue(value);
-                gatt.writeDescriptor(descriptor);
-            }
+            // API 34+ : use writeDescriptor(descriptor, value)
+            gatt.writeDescriptor(descriptor, value);
             Log.d(TAG, "Souscription aux notifications Mute envoyée.");
         } else {
             Log.e(TAG, "CCCD non trouvé pour la caractéristique Mute.");
@@ -78,4 +81,3 @@ public class MicServiceHandler {
         }
     }
 }
-
