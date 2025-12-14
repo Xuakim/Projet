@@ -19,16 +19,23 @@ public class AudioInputServiceHandler {
     private final Context context;
     private final UiController uiController;
 
-    // UUID du service AICS
-    private static final UUID AICS_SERVICE = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
+    // UUID du service AICS (public si besoin depuis BleManager)
+    public static final UUID AICS_SERVICE =
+            UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
 
-    // UUID des caractéristiques AICS
-    private static final UUID AUDIO_INPUT_STATE = UUID.fromString("00002B77-0000-1000-8000-00805f9b34fb");
-    private static final UUID GAIN_SETTINGS_PROPERTIES = UUID.fromString("00002B78-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_TYPE = UUID.fromString("00002B79-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_STATUS = UUID.fromString("00002B7A-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_CONTROL_POINT = UUID.fromString("00002B7B-0000-1000-8000-00805f9b34fb");
-    private static final UUID AUDIO_INPUT_DESCRIPTION = UUID.fromString("00002B7C-0000-1000-8000-00805f9b34fb");
+    // UUID des caractéristiques AICS (rendre publics celles dont tu as besoin)
+    public static final UUID AUDIO_INPUT_STATE =
+            UUID.fromString("00002B77-0000-1000-8000-00805f9b34fb");
+    public static final UUID GAIN_SETTINGS_PROPERTIES =
+            UUID.fromString("00002B78-0000-1000-8000-00805f9b34fb");
+    public static final UUID AUDIO_INPUT_TYPE =
+            UUID.fromString("00002B79-0000-1000-8000-00805f9b34fb");
+    public static final UUID AUDIO_INPUT_STATUS =
+            UUID.fromString("00002B7A-0000-1000-8000-00805f9b34fb");
+    public static final UUID AUDIO_INPUT_CONTROL_POINT =
+            UUID.fromString("00002B7B-0000-1000-8000-00805f9b34fb");
+    public static final UUID AUDIO_INPUT_DESCRIPTION =
+            UUID.fromString("00002B7C-0000-1000-8000-00805f9b34fb");
 
     public AudioInputServiceHandler(Context context, UiController uiController) {
         this.context = context;
@@ -40,7 +47,6 @@ public class AudioInputServiceHandler {
         BluetoothGattService aics = gatt.getService(AICS_SERVICE);
         if (aics != null) {
             Log.d(TAG, "Service AICS trouvé");
-
             readCharacteristic(gatt, aics.getCharacteristic(AUDIO_INPUT_STATE), "Audio Input State");
             readCharacteristic(gatt, aics.getCharacteristic(GAIN_SETTINGS_PROPERTIES), "Gain Settings Properties");
             readCharacteristic(gatt, aics.getCharacteristic(AUDIO_INPUT_TYPE), "Audio Input Type");
@@ -53,7 +59,9 @@ public class AudioInputServiceHandler {
     }
 
     /** Lecture d’une caractéristique */
-    private void readCharacteristic(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, String label) {
+    private void readCharacteristic(BluetoothGatt gatt,
+                                    BluetoothGattCharacteristic characteristic,
+                                    String label) {
         if (characteristic != null) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
                     == PackageManager.PERMISSION_GRANTED) {
@@ -72,7 +80,6 @@ public class AudioInputServiceHandler {
             Log.w(TAG, "Caractéristique " + label + " non disponible");
         }
     }
-
 
     /** Traitement des valeurs lues */
     public void handleCharacteristic(BluetoothGattCharacteristic characteristic) {
@@ -99,7 +106,6 @@ public class AudioInputServiceHandler {
         byte[] data = characteristic.getValue();
         if (data == null) return "N/A";
 
-        // Exemple simple : afficher les bytes en hexadécimal
         StringBuilder sb = new StringBuilder();
         for (byte b : data) {
             sb.append(String.format("%02X ", b));

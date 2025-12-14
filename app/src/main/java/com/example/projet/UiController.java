@@ -1,6 +1,8 @@
 package com.example.projet;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.ListView;
 import android.widget.TextView;
 
@@ -18,6 +20,9 @@ public class UiController {
     private final TextView audioInputControlPoint;
     private final TextView audioInputDescription;
 
+    // Handler pour garantir les mises à jour sur le thread principal
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
     public UiController(Activity activity, TextView statusText, ListView deviceListView) {
         this.statusText = statusText;
         this.deviceListView = deviceListView;
@@ -34,14 +39,14 @@ public class UiController {
     // --- Méthodes pour afficher des messages généraux ---
     public void showMessage(String message) {
         if (statusText != null) {
-            statusText.setText(message);
+            mainHandler.post(() -> statusText.setText(message));
         }
     }
 
     // --- Mise à jour du statut du micro (MCS) ---
     public void updateMicStatus(String status) {
         if (statusText != null) {
-            statusText.setText("Microphone : " + status);
+            mainHandler.post(() -> statusText.setText("Microphone : " + status));
         }
     }
 
@@ -49,22 +54,34 @@ public class UiController {
     public void updateAicsValue(String label, String value) {
         switch (label) {
             case "Audio Input State":
-                if (audioInputState != null) audioInputState.setText("Audio Input State : " + value);
+                if (audioInputState != null) {
+                    mainHandler.post(() -> audioInputState.setText("Audio Input State : " + value));
+                }
                 break;
             case "Gain Settings Properties":
-                if (gainSettings != null) gainSettings.setText("Gain Settings Properties : " + value);
+                if (gainSettings != null) {
+                    mainHandler.post(() -> gainSettings.setText("Gain Settings Properties : " + value));
+                }
                 break;
             case "Audio Input Type":
-                if (audioInputType != null) audioInputType.setText("Audio Input Type : " + value);
+                if (audioInputType != null) {
+                    mainHandler.post(() -> audioInputType.setText("Audio Input Type : " + value));
+                }
                 break;
             case "Audio Input Status":
-                if (audioInputStatus != null) audioInputStatus.setText("Audio Input Status : " + value);
+                if (audioInputStatus != null) {
+                    mainHandler.post(() -> audioInputStatus.setText("Audio Input Status : " + value));
+                }
                 break;
             case "Audio Input Control Point":
-                if (audioInputControlPoint != null) audioInputControlPoint.setText("Audio Input Control Point : " + value);
+                if (audioInputControlPoint != null) {
+                    mainHandler.post(() -> audioInputControlPoint.setText("Audio Input Control Point : " + value));
+                }
                 break;
             case "Audio Input Description":
-                if (audioInputDescription != null) audioInputDescription.setText("Audio Input Description : " + value);
+                if (audioInputDescription != null) {
+                    mainHandler.post(() -> audioInputDescription.setText("Audio Input Description : " + value));
+                }
                 break;
         }
     }
