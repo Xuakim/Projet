@@ -58,23 +58,11 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
             Log.w(TAG, "Permission BLUETOOTH_CONNECT manquante pour lire le nom du périphérique");
         }
 
-// Si le nom est null ou vide, tu peux choisir de ne pas afficher l'appareil
         if (name == null || name.trim().isEmpty()) {
-            holder.deviceName.setText(""); // ou "Sans nom"
+            holder.deviceName.setText("Sans nom");
         } else {
             holder.deviceName.setText(name);
         }
-
-
-        // Filtrer les appareils sans nom
-        if (name == null || name.trim().isEmpty()) {
-            holder.deviceName.setText(""); // ou "Sans nom" si tu veux
-        } else {
-            holder.deviceName.setText(name);
-        }
-
-        // Ne pas afficher l’adresse MAC
-        holder.deviceAddress.setVisibility(View.GONE);
 
         holder.itemView.setOnClickListener(v -> listener.onDeviceClick(device));
     }
@@ -90,7 +78,8 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
 
         public ViewHolder(@NonNull View itemView) {
             super(itemView);
-            deviceName = itemView.findViewById(R.id.deviceName);
+            deviceName = itemView.findViewById(R.id.device_name);
+            deviceAddress = itemView.findViewById(R.id.device_address);
         }
     }
 }

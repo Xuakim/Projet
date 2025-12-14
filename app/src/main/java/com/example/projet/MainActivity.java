@@ -12,8 +12,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -32,20 +30,51 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     private BluetoothLeScanner bluetoothLeScanner;
     private final ArrayList<BluetoothDevice> deviceList = new ArrayList<>();
     private DeviceListAdapter deviceListAdapter;
-    private TextView dataDisplay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        dataDisplay = findViewById(R.id.dataDisplay);
-        RecyclerView deviceRecyclerView = findViewById(R.id.deviceListView);
+        // 1. Check for BLE feature
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            showMessage("Bluetooth LE n'est pas supporté sur cet appareil.");
+            finish();
+            return;
+        }
 
+        // 2. Get BluetoothManager and check for null
         final BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-        BluetoothAdapter bluetoothAdapter = bluetoothManager.getAdapter();
-        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+        if (bluetoothManager == null) {
+            showMessage("Impossible d'accéder au service Bluetooth.");
+            finish();
+            return;
+        }
 
+        // 3. Get BluetoothAdapter and check for null
+        BluetoothAdapter bluetoothAdapter = bluetoothManager.getAdapter();
+        if (bluetoothAdapter == null) {
+            showMessage("Bluetooth n'est pas supporté sur cet appareil.");
+            finish();
+            return;
+        }
+
+        // 4. Check if Bluetooth is enabled
+        if (!bluetoothAdapter.isEnabled()) {
+            showMessage("Veuillez activer le Bluetooth et redémarrer l'application.");
+            finish();
+            return;
+        }
+
+        // 5. Get Scanner and check for null
+        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+        if (bluetoothLeScanner == null) {
+            showMessage("Impossible d'initialiser le scanner BLE. Vérifiez les permissions et l'état du Bluetooth.");
+            finish();
+            return;
+        }
+
+        RecyclerView deviceRecyclerView = findViewById(R.id.deviceListView);
         deviceRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         deviceListAdapter = new DeviceListAdapter(this, deviceList, this);
         deviceRecyclerView.setAdapter(deviceListAdapter);
@@ -79,7 +108,7 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
                 showMessage("Impossible de scanner, permission refusée");
             }
         } else {
-            showMessage("Permission scan manquante");
+            showMessage("Permission de scan manquante");
         }
     }
 
@@ -87,13 +116,11 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
         @Override
         public void onScanResult(int callbackType, @NonNull ScanResult result) {
             BluetoothDevice device = result.getDevice();
-            if (!deviceList.contains(device)) {
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    String deviceName = device.getName();
-                    if (deviceName != null && !deviceName.trim().isEmpty()) {
-                        deviceList.add(device);
-                        runOnUiThread(() -> deviceListAdapter.notifyDataSetChanged());
-                    }
+            if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                String deviceName = device.getName();
+                if (deviceName != null && !deviceName.trim().isEmpty() && !deviceList.contains(device)) {
+                    deviceList.add(device);
+                    runOnUiThread(() -> deviceListAdapter.notifyDataSetChanged());
                 }
             }
         }
@@ -138,6 +165,6 @@ public class MainActivity extends AppCompatActivity implements DeviceListAdapter
     }
 
     private void showMessage(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 }
