@@ -59,6 +59,7 @@ public class DeviceControlActivity extends AppCompatActivity {
         // Action du bouton Mute
         muteButton.setOnClickListener(v -> {
             statusText.setText("Muted");
+            bleManager.writeMute(false);
             microphoneIcon.setImageResource(R.drawable.mic_off);
             // MicServiceHandler: mute
         });
@@ -66,6 +67,7 @@ public class DeviceControlActivity extends AppCompatActivity {
         // Action du bouton Unmute
         unmuteButton.setOnClickListener(v -> {
             statusText.setText("Unmuted");
+            bleManager.writeMute(true);
             microphoneIcon.setImageResource(R.drawable.mic_on);
             // MicServiceHandler: unmute
         });
