@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,6 +16,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import java.util.ArrayList;
 
@@ -43,6 +45,24 @@ public class MainActivity extends AppCompatActivity {
         deviceListAdapter = new DeviceListAdapter(this, deviceList);
         deviceListView.setAdapter(deviceListAdapter);
 
+        // Listener de clic sur un appareil
+        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
+            BluetoothDevice device = deviceList.get(position);
+            // Vérification permission avant utilisation
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                    == PackageManager.PERMISSION_GRANTED) {
+                try {
+                    Intent intent = new Intent(MainActivity.this, DeviceControlActivity.class);
+                    intent.putExtra("device", device);
+                    startActivity(intent);
+                } catch (SecurityException e) {
+                    uiController.showMessage("Impossible d'ouvrir la page, permission refusée");
+                }
+            } else {
+                uiController.showMessage("Permission BLUETOOTH_CONNECT manquante");
+            }
+        });
+
         checkPermissionsAndStartScan();
     }
 
@@ -60,10 +80,19 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startBleScan() {
-        deviceList.clear();
-        deviceListAdapter.notifyDataSetChanged();
-        bluetoothLeScanner.startScan(scanCallback);
-        uiController.showMessage("Scan en cours...");
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+                == PackageManager.PERMISSION_GRANTED) {
+            try {
+                deviceList.clear();
+                deviceListAdapter.notifyDataSetChanged();
+                bluetoothLeScanner.startScan(scanCallback);
+                uiController.showMessage("Scan en cours...");
+            } catch (SecurityException e) {
+                uiController.showMessage("Impossible de scanner, permission refusée");
+            }
+        } else {
+            uiController.showMessage("Permission scan manquante");
+        }
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -81,6 +110,8 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode,
                                            @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults); // ✅ obligatoire
+
         if (requestCode == REQUEST_PERMISSIONS) {
             checkPermissionsAndStartScan();
         }
