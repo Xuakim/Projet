@@ -131,7 +131,7 @@ public class BleManager {
                     BluetoothGattCharacteristic muteChar = mcs.getCharacteristic(MCS_MUTE);
                     if (muteChar != null) {
                         safeReadCharacteristic(gatt, muteChar, "Mute (MCS)");
-                        enableNotifications(gatt, muteChar);
+                        enableNotifications(gatt, muteChar); // 🔑 ici
                     }
                 }
                 // Vérifier AICS
@@ -184,15 +184,26 @@ public class BleManager {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED) {
             try {
+                // Active les notifications côté client
                 gatt.setCharacteristicNotification(characteristic, true);
-                BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD);
+
+                // Récupère le descripteur CCCD
+                BluetoothGattDescriptor descriptor = characteristic.getDescriptor(
+                        UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+                );
+
                 if (descriptor != null) {
                     descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                     gatt.writeDescriptor(descriptor);
+                    Log.d(TAG, "Notifications activées pour " + characteristic.getUuid());
+                } else {
+                    Log.w(TAG, "CCCD non trouvé pour " + characteristic.getUuid());
                 }
             } catch (SecurityException e) {
                 uiController.showMessage("Impossible d'activer les notifications : permission refusée");
             }
+        } else {
+            uiController.showMessage("Permission BLUETOOTH_CONNECT manquante pour activer les notifications");
         }
     }
 
