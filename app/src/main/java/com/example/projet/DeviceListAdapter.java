@@ -42,9 +42,26 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
 
     public void addDevice(BluetoothDevice device) {
         if (device == null) return;
+
+        // Récupère un nom sûr (nom humain ou adresse si nom absent)
+        String displayName = safeGetDeviceName(device);
+        if (displayName == null) return;
+
+        // Regex pour détecter une adresse MAC (AA:BB:CC:DD:EE:FF)
+        boolean isMac = displayName.matches("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$");
+
+        // Ne pas afficher si le nom est "Inconnu" ou si c'est une adresse MAC
+        if ("Inconnu".equalsIgnoreCase(displayName) || isMac) {
+            // Optionnel : log pour debug
+            Log.d(TAG, "Device ignoré (nom non affiché): " + displayName);
+            return;
+        }
+
+        // Eviter doublons
         if (!deviceList.contains(device)) {
             deviceList.add(device);
             notifyItemInserted(deviceList.size() - 1);
+            Log.d(TAG, "Device ajouté: " + displayName);
         }
     }
 
@@ -65,6 +82,11 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
         BluetoothDevice device = deviceList.get(position);
         String displayName = safeGetDeviceName(device);
         holder.deviceName.setText(displayName);
+        String addr = "—";
+        try {
+            addr = device.getAddress();
+        } catch (SecurityException ignored) { }
+        holder.deviceAddress.setText(addr);
         holder.itemView.setOnClickListener(v -> {
             try {
                 listener.onDeviceClick(device);
@@ -82,20 +104,18 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
     private String safeGetDeviceName(BluetoothDevice device) {
         if (device == null) return "Sans nom";
         try {
-            // Vérifier permission BLUETOOTH_CONNECT sur Android 12+
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
                     || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
                 String name = device.getName();
                 if (name != null && !name.trim().isEmpty()) return name;
-                // fallback : adresse si disponible et permission ok
-                try {
-                    String addr = device.getAddress();
-                    if (addr != null && !addr.trim().isEmpty()) return addr;
-                } catch (SecurityException ignored) { }
             }
         } catch (SecurityException e) {
             Log.w(TAG, "Permission BLUETOOTH_CONNECT refusée pour getName()", e);
         }
+        try {
+            String addr = device.getAddress();
+            if (addr != null && !addr.trim().isEmpty()) return addr;
+        } catch (SecurityException ignored) { }
         return "Sans nom";
     }
 
