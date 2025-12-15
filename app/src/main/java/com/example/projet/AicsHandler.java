@@ -25,7 +25,7 @@ public class AicsHandler {
     }
 
     // UUIDs
-    private static final UUID AICS_SERVICE = BleManager.AICS_SERVICE;
+    private static final UUID AICS_SERVICE = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
     private static final UUID AUDIO_INPUT_STATE = UUID.fromString("00002B77-0000-1000-8000-00805f9b34fb");
     private static final UUID GAIN_SETTINGS_PROPERTIES = UUID.fromString("00002B78-0000-1000-8000-00805f9b34fb");
     private static final UUID AUDIO_INPUT_TYPE = UUID.fromString("00002B79-0000-1000-8000-00805f9b34fb");

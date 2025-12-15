@@ -19,7 +19,9 @@ import androidx.core.content.ContextCompat;
 
 import com.google.android.material.appbar.MaterialToolbar;
 
-public class DeviceControlActivity extends AppCompatActivity implements BleManager.BleEventListener,
+import java.util.Arrays;
+
+public class DeviceControlActivity extends AppCompatActivity implements BleEventListener,
         MicsHandler.MicsListener, AicsHandler.AicsListener {
 
     private static final String TAG = "DeviceControlAct";
@@ -29,11 +31,17 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
     private AicsHandler aicsHandler;
     private UiController uiController;
 
+    private MaterialToolbar topAppBar;
     private TextView deviceNameView;
     private ImageView microphoneIcon;
+    private TextView statusTextView;
     private Button muteButton;
     private Button unmuteButton;
     private Button disconnectButton;
+    private Button disableCccdButton; // optionnel
+
+    private BluetoothDevice currentDevice;
+    private volatile boolean isGattConnected = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,14 +56,15 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
         aicsHandler = new AicsHandler(bleManager, this);
 
         // Views
+        topAppBar = findViewById(R.id.topAppBar);
         deviceNameView = findViewById(R.id.deviceName);
         microphoneIcon = findViewById(R.id.microphoneIcon);
+        statusTextView = findViewById(R.id.statusText);
         muteButton = findViewById(R.id.muteButton);
         unmuteButton = findViewById(R.id.unmuteButton);
         disconnectButton = findViewById(R.id.disconnectButton);
-
+        //disableCccdButton = findViewById(R.id.disableCccdButton); // peut être null si non présent
         // Toolbar navigation
-        MaterialToolbar topAppBar = findViewById(R.id.topAppBar);
         if (topAppBar != null) {
             topAppBar.setNavigationOnClickListener(v -> {
                 if (bleManager != null) bleManager.disconnect();
@@ -63,57 +72,88 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
             });
         }
 
-        // Récupération du BluetoothDevice passé par l'intent
-        BluetoothDevice device = getIntent().getParcelableExtra("device");
-        if (device != null) {
-            String name = safeGetDeviceName(device);
-            deviceNameView.setText("Appareil : " + name);
+        // Désactiver les boutons tant que non connecté
+        setControlsEnabled(false);
 
-            // Connecter si permission accordée (ou si API < S)
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                bleManager.connect(device);
-                uiController.showMessage("Connexion en cours...");
+        // Récupération du BluetoothDevice passé par l'intent
+        currentDevice = getIntent().getParcelableExtra("device");
+        String initialName = (currentDevice != null) ? safeGetDeviceName(currentDevice) : "Inconnu";
+
+        // Mettre le titre du toolbar et le deviceNameView
+        if (topAppBar != null) topAppBar.setTitle(initialName);
+        if (deviceNameView != null) deviceNameView.setText("Appareil : " + initialName);
+
+        // Tenter la connexion si permission accordée
+        if (currentDevice != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                    bleManager.connect(currentDevice);
+                    uiController.showMessage("Connexion en cours...");
+                } else {
+                    uiController.showMessage("Permission BLUETOOTH_CONNECT manquante");
+                }
             } else {
-                uiController.showMessage("Permission BLUETOOTH_CONNECT manquante");
+                bleManager.connect(currentDevice);
+                uiController.showMessage("Connexion en cours...");
             }
         } else {
-            deviceNameView.setText("Appareil : aucun");
+            uiController.showMessage("Aucun appareil fourni");
         }
 
-        // Boutons Mute / Unmute
+        // Boutons Mute / Unmute : écriture CCCD (notifications/indications) avec fallback
         muteButton.setOnClickListener(v -> {
-            uiController.updateMicStatus("Muting...");
-            BluetoothGatt gatt = bleManager.getBluetoothGatt();
-            if (gatt != null) {
-                micsHandler.setMute(gatt, false);
+            if (bleManager == null) return;
+            // tenter CCCD (indications = "Mute" mapping)
+            boolean requested = bleManager.writeCccdForCharacteristic(BleManager.MCS_MUTE, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
+            if (!requested) {
+                // fallback : écrire une valeur sur la caractéristique (ex: 0x01 pour mute) — adapter selon device
+                byte[] muteValue = new byte[]{0x01};
+                boolean wrote = bleManager.writeCharacteristicByUuid(BleManager.MCS_MUTE, muteValue);
+                if (!wrote) {
+                    uiController.showMessage("Impossible d'activer Mute : caractéristique/CCCD absents");
+                    setControlsEnabled(false);
+                } else {
+                    uiController.updateMicStatus("Mute demandé (écriture caractéristique)...");
+                }
             } else {
-                uiController.showMessage("GATT non disponible");
+                uiController.updateMicStatus("Mute demandé (CCCD)...");
             }
-            microphoneIcon.setImageResource(R.drawable.mic_off);
         });
 
         unmuteButton.setOnClickListener(v -> {
-            uiController.updateMicStatus("Unmuting...");
-            BluetoothGatt gatt = bleManager.getBluetoothGatt();
-            if (gatt != null) {
-                micsHandler.setMute(gatt, true);
+            if (bleManager == null) return;
+            boolean requested = bleManager.writeCccdForCharacteristic(BleManager.MCS_MUTE, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            if (!requested) {
+                // fallback : écrire 0x00 pour unmute si le device attend ça
+                byte[] unmuteValue = new byte[]{0x00};
+                boolean wrote = bleManager.writeCharacteristicByUuid(BleManager.MCS_MUTE, unmuteValue);
+                if (!wrote) {
+                    uiController.showMessage("Impossible d'activer Unmute : caractéristique/CCCD absents");
+                    setControlsEnabled(false);
+                } else {
+                    uiController.updateMicStatus("Unmute demandé (écriture caractéristique)...");
+                }
             } else {
-                uiController.showMessage("GATT non disponible");
+                uiController.updateMicStatus("Unmute demandé (CCCD)...");
             }
-            microphoneIcon.setImageResource(R.drawable.mic_on);
         });
+
+        if (disableCccdButton != null) {
+            disableCccdButton.setOnClickListener(v -> {
+                if (bleManager == null) return;
+                boolean requested = bleManager.writeCccdForCharacteristic(BleManager.MCS_MUTE, new byte[]{0x00, 0x00});
+                if (!requested) {
+                    uiController.showMessage("Impossible de désactiver CCCD : absent");
+                } else {
+                    uiController.updateMicStatus("Désactivation CCCD demandée...");
+                }
+            });
+        }
 
         disconnectButton.setOnClickListener(v -> {
             if (bleManager != null) bleManager.disconnect();
             finish();
         });
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        Log.d(TAG, "onResume");
     }
 
     @Override
@@ -125,66 +165,248 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
     }
 
     // -------------------------
-    // BleManager.BleEventListener callbacks
+    // Helpers UI
+    // -------------------------
+    private void setControlsEnabled(boolean enabled) {
+        if (muteButton != null) muteButton.setEnabled(enabled);
+        if (unmuteButton != null) unmuteButton.setEnabled(enabled);
+        if (disconnectButton != null) disconnectButton.setEnabled(enabled);
+        if (disableCccdButton != null) disableCccdButton.setEnabled(enabled);
+    }
+
+    private void updateToolbarTitle(String title) {
+        runOnUiThread(() -> {
+            if (topAppBar != null) {
+                topAppBar.setTitle(title);
+            }
+        });
+    }
+
+    // -------------------------
+    // BleEventListener callbacks
     // -------------------------
     @Override
     public void onScanResult(BluetoothDevice device) {
-        // non utilisé dans cette activité
+        // non utilisé ici
     }
 
     @Override
     public void onConnected(BluetoothDevice device) {
+        isGattConnected = true;
         String name = safeGetDeviceName(device);
         uiController.showMessage("Connecté à " + name);
         Log.d(TAG, "onConnected: " + name);
+
+        runOnUiThread(() -> {
+            if (deviceNameView != null) deviceNameView.setText("Appareil : " + name);
+            if (statusTextView != null) statusTextView.setText("Statut : connecté");
+            setControlsEnabled(true);
+            updateToolbarTitle(name + " (connecté)");
+        });
     }
 
     @Override
     public void onDisconnected(BluetoothDevice device) {
-        uiController.showMessage("Déconnecté");
-        Log.d(TAG, "onDisconnected");
+        isGattConnected = false;
+        String name = (device != null) ? safeGetDeviceName(device) : "Inconnu";
+        uiController.showMessage("Déconnecté de " + name);
+        Log.d(TAG, "onDisconnected: " + name);
+
+        runOnUiThread(() -> {
+            if (statusTextView != null) statusTextView.setText("Statut : déconnecté");
+            setControlsEnabled(false);
+            updateToolbarTitle(name + " (déconnecté)");
+        });
     }
 
     @Override
-    public void onServicesDiscovered(BluetoothGatt gatt) {
-        uiController.showMessage("Services découverts");
-        Log.d(TAG, "onServicesDiscovered");
-        // déléguer aux handlers
-        micsHandler.onServicesDiscovered(gatt);
-        aicsHandler.onServicesDiscovered(gatt);
+    public void onServicesDiscovered(android.bluetooth.BluetoothGatt gatt) {
+        runOnUiThread(() -> {
+            if (gatt == null) {
+                Log.w(TAG, "onServicesDiscovered: gatt null");
+                uiController.showMessage("Services découverts: gatt null");
+                return;
+            }
+
+            String deviceName = (gatt.getDevice() != null) ? safeGetDeviceName(gatt.getDevice()) : "device";
+            Log.d(TAG, "Services discovered for device: " + deviceName);
+
+            boolean hasMcs = false;
+            boolean hasAics = false;
+
+            java.util.List<android.bluetooth.BluetoothGattService> services = gatt.getServices();
+            if (services == null || services.isEmpty()) {
+                Log.w(TAG, "Aucun service découvert");
+                uiController.showMessage("Aucun service découvert");
+            } else {
+                for (android.bluetooth.BluetoothGattService s : services) {
+                    String sUuid = (s.getUuid() != null) ? s.getUuid().toString() : "null";
+                    Log.d(TAG, "Service UUID: " + sUuid);
+
+                    if (s.getUuid() != null) {
+                        if (s.getUuid().equals(BleManager.MCS_SERVICE)) {
+                            hasMcs = true;
+                        }
+                        if (s.getUuid().toString().equalsIgnoreCase("00001843-0000-1000-8000-00805f9b34fb")) {
+                            hasAics = true;
+                        }
+                    }
+
+                    for (android.bluetooth.BluetoothGattCharacteristic c : s.getCharacteristics()) {
+                        String cUuid = (c.getUuid() != null) ? c.getUuid().toString() : "null";
+                        Log.d(TAG, "  Char UUID: " + cUuid + " properties=" + c.getProperties());
+                        if (c.getDescriptors() != null) {
+                            for (android.bluetooth.BluetoothGattDescriptor d : c.getDescriptors()) {
+                                String dUuid = (d.getUuid() != null) ? d.getUuid().toString() : "null";
+                                Log.d(TAG, "    Desc UUID: " + dUuid);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!hasMcs) {
+                Log.d(TAG, "MICS service not present");
+                uiController.showMessage("MICS non disponible");
+                setControlsEnabled(false);
+            } else {
+                Log.d(TAG, "MICS service present");
+                uiController.showMessage("MICS disponible");
+            }
+
+            if (!hasAics) {
+                Log.d(TAG, "AICS not present");
+                uiController.showMessage("AICS non disponible");
+            } else {
+                Log.d(TAG, "AICS present");
+                uiController.showMessage("AICS disponible");
+            }
+
+            // déléguer aux handlers si présents
+            micsHandler.onServicesDiscovered(gatt);
+            aicsHandler.onServicesDiscovered(gatt);
+        });
     }
 
     @Override
     public void onCharacteristicRead(BluetoothGattCharacteristic characteristic) {
         if (characteristic == null) return;
-        if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
-            micsHandler.handleCharacteristic(characteristic);
-        } else {
-            aicsHandler.handleCharacteristic(characteristic);
-        }
+        runOnUiThread(() -> {
+            String uuid = characteristic.getUuid() != null ? characteristic.getUuid().toString() : "unknown";
+            Log.d(TAG, "onCharacteristicRead uuid=" + uuid);
+            uiController.showMessage("Caractéristique lue: " + uuid);
+            if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
+                micsHandler.handleCharacteristic(characteristic);
+            } else {
+                aicsHandler.handleCharacteristic(characteristic);
+            }
+        });
     }
 
     @Override
     public void onCharacteristicChanged(BluetoothGattCharacteristic characteristic) {
         if (characteristic == null) return;
-        if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
-            micsHandler.handleCharacteristic(characteristic);
-        } else {
-            aicsHandler.handleCharacteristic(characteristic);
-        }
+        runOnUiThread(() -> {
+            String uuid = characteristic.getUuid() != null ? characteristic.getUuid().toString() : "unknown";
+            Log.d(TAG, "onCharacteristicChanged uuid=" + uuid);
+            uiController.showMessage("Notification reçue: " + uuid);
+            if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
+                micsHandler.handleCharacteristic(characteristic);
+            } else {
+                aicsHandler.handleCharacteristic(characteristic);
+            }
+        });
     }
 
     @Override
     public void onDescriptorWrite(BluetoothGattDescriptor descriptor, int status) {
-        String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
-        uiController.showMessage("Descriptor write: " + uuid + " status=" + status);
-        Log.d(TAG, "onDescriptorWrite uuid=" + uuid + " status=" + status);
+        runOnUiThread(() -> {
+            String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
+            Log.d(TAG, "onDescriptorWrite uuid=" + uuid + " status=" + status);
+
+            if (descriptor == null) {
+                uiController.showMessage("Descriptor écrit: null");
+                return;
+            }
+
+            android.bluetooth.BluetoothGattCharacteristic parentChar = descriptor.getCharacteristic();
+            if (parentChar != null && parentChar.getUuid() != null && parentChar.getUuid().equals(BleManager.MCS_MUTE)) {
+                byte[] value = descriptor.getValue();
+                if (value == null) {
+                    // fallback : lire explicitement le descriptor
+                    Log.d(TAG, "descriptor.getValue() null, lecture explicite demandée");
+                    bleManager.readDescriptorForCharacteristic(BleManager.MCS_MUTE);
+                    return;
+                }
+                applyCccdValueToUi(value, status);
+            } else {
+                uiController.showMessage("Descriptor écrit: " + uuid + " (status=" + status + ")");
+            }
+        });
+    }
+
+    @Override
+    public void onDescriptorRead(BluetoothGattDescriptor descriptor, int status) {
+        runOnUiThread(() -> {
+            String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
+            Log.d(TAG, "onDescriptorRead uuid=" + uuid + " status=" + status);
+            if (descriptor == null) return;
+            android.bluetooth.BluetoothGattCharacteristic parentChar = descriptor.getCharacteristic();
+            if (parentChar != null && parentChar.getUuid() != null && parentChar.getUuid().equals(BleManager.MCS_MUTE)) {
+                byte[] value = descriptor.getValue();
+                applyCccdValueToUi(value, status);
+            } else {
+                uiController.showMessage("Descriptor lu: " + uuid + " (status=" + status + ")");
+            }
+        });
+    }
+
+    private void applyCccdValueToUi(byte[] value, int status) {
+        String stateLabel = "Disabled";
+        if (value != null) {
+            if (Arrays.equals(value, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
+                stateLabel = "Unmute";
+            } else if (Arrays.equals(value, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)) {
+                stateLabel = "Mute";
+            } else if (value.length >= 2 && value[0] == 0 && value[1] == 0) {
+                stateLabel = "Disabled";
+            } else {
+                stateLabel = "Unknown (" + BleManager.bytesToHex(value) + ")";
+            }
+        } else {
+            stateLabel = "Disabled";
+        }
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            uiController.showMessage("CCCD: " + stateLabel);
+        } else {
+            uiController.showMessage("Lecture/écriture CCCD échouée (status=" + status + ")");
+        }
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            if (statusTextView != null) statusTextView.setText("Statut : " + stateLabel);
+            if ("Mute".equals(stateLabel)) {
+                if (microphoneIcon != null) microphoneIcon.setImageResource(R.drawable.mic_off);
+                setControlsEnabled(false);
+            } else if ("Unmute".equals(stateLabel)) {
+                if (microphoneIcon != null) microphoneIcon.setImageResource(R.drawable.mic_on);
+                setControlsEnabled(true);
+            } else {
+                if (microphoneIcon != null) microphoneIcon.setImageResource(R.drawable.mic_off);
+                setControlsEnabled(false);
+            }
+            String name = (currentDevice != null) ? safeGetDeviceName(currentDevice) : "device";
+            updateToolbarTitle(name + " (" + stateLabel + ")");
+        }
     }
 
     @Override
     public void onError(String message) {
-        uiController.showMessage("Erreur BLE: " + message);
-        Log.w(TAG, "onError: " + message);
+        runOnUiThread(() -> {
+            Log.w(TAG, "Erreur BLE: " + message);
+            Toast.makeText(DeviceControlActivity.this, "Erreur BLE: " + message, Toast.LENGTH_LONG).show();
+            uiController.showMessage("Erreur BLE: " + message);
+        });
     }
 
     // -------------------------
@@ -192,7 +414,10 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
     // -------------------------
     @Override
     public void onMuteStateUpdated(String humanReadable) {
-        uiController.updateMicStatus(humanReadable);
+        runOnUiThread(() -> {
+            uiController.updateMicStatus(humanReadable);
+            if (statusTextView != null) statusTextView.setText("Statut : " + humanReadable);
+        });
     }
 
     // -------------------------
@@ -200,50 +425,49 @@ public class DeviceControlActivity extends AppCompatActivity implements BleManag
     // -------------------------
     @Override
     public void onAudioInputState(String human) {
-        uiController.updateAudioInputState(human);
+        runOnUiThread(() -> uiController.updateAudioInputState(human));
     }
 
     @Override
     public void onGainSettings(String human) {
-        uiController.updateGainSettings(human);
+        runOnUiThread(() -> uiController.updateGainSettings(human));
     }
 
     @Override
     public void onAudioInputType(String human) {
-        uiController.updateAudioInputType(human);
+        runOnUiThread(() -> uiController.updateAudioInputType(human));
     }
 
     @Override
     public void onAudioInputStatus(String human) {
-        uiController.updateAudioInputStatus(human);
+        runOnUiThread(() -> uiController.updateAudioInputStatus(human));
     }
 
     @Override
     public void onAudioInputDescription(String human) {
-        uiController.updateAudioInputDescription(human);
+        runOnUiThread(() -> uiController.updateAudioInputDescription(human));
     }
 
     // -------------------------
     // Utilitaires
     // -------------------------
     private String safeGetDeviceName(BluetoothDevice device) {
-        if (device == null) return "device";
+        if (device == null) return "Inconnu";
         try {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    || ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                 String n = device.getName();
                 if (n != null && !n.trim().isEmpty()) return n;
-                // fallback to address if name absent and permission still allows getAddress()
-                try {
-                    String addr = device.getAddress();
-                    if (addr != null && !addr.trim().isEmpty()) return addr;
-                } catch (SecurityException se) {
-                    // ignore
-                }
             }
         } catch (SecurityException e) {
             Log.w(TAG, "Permission BLUETOOTH_CONNECT refusée pour getName()", e);
         }
-        return "device";
+        try {
+            String addr = device.getAddress();
+            return addr != null ? addr : "Inconnu";
+        } catch (SecurityException e) {
+            Log.w(TAG, "Permission refusée pour getAddress", e);
+            return "Inconnu";
+        }
     }
 }

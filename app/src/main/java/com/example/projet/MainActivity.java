@@ -19,7 +19,7 @@ import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-public class MainActivity extends AppCompatActivity implements BleManager.BleEventListener,
+public class MainActivity extends AppCompatActivity implements BleEventListener,
         DeviceListAdapter.OnDeviceClickListener {
 
     private static final String TAG = "MainActivity";
@@ -262,6 +262,28 @@ public class MainActivity extends AppCompatActivity implements BleManager.BleEve
             String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
             Log.d(TAG, "onDescriptorWrite uuid=" + uuid + " status=" + status);
             Toast.makeText(MainActivity.this, "Descriptor écrit: " + uuid + " (status=" + status + ")", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    @Override
+    public void onDescriptorRead(android.bluetooth.BluetoothGattDescriptor descriptor, int status) {
+        runOnUiThread(() -> {
+            String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
+            Log.d(TAG, "onDescriptorRead uuid=" + uuid + " status=" + status);
+            if (descriptor == null) return;
+
+            // Si tu veux filtrer et agir seulement sur le CCCD du MCS_MUTE
+            android.bluetooth.BluetoothGattCharacteristic parent = descriptor.getCharacteristic();
+            if (parent != null && parent.getUuid() != null && parent.getUuid().equals(BleManager.MCS_MUTE)) {
+                byte[] value = descriptor.getValue();
+                String hex = (value != null) ? BleManager.bytesToHex(value) : "null";
+                Log.d(TAG, "CCCD value for MCS_MUTE: " + hex);
+                Toast.makeText(MainActivity.this, "CCCD lu: " + hex, Toast.LENGTH_SHORT).show();
+                // Optionnel : mettre à jour l'UI si nécessaire (adapter, TextView, etc.)
+            } else {
+                // comportement par défaut : log / toast pour debug
+                Toast.makeText(MainActivity.this, "Descriptor lu: " + uuid + " (status=" + status + ")", Toast.LENGTH_SHORT).show();
+            }
         });
     }
 }
