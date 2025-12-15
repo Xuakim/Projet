@@ -32,6 +32,9 @@ public class BleManager {
     private final Context context;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final BleEventListener listener;
+    // retry counter for service discovery
+    private int serviceDiscoveryRetries = 0;
+    private static final int MAX_SERVICE_DISCOVERY_RETRIES = 3;
 
     private BluetoothLeScanner scanner;
     private BluetoothGatt bluetoothGatt;
@@ -257,7 +260,7 @@ public class BleManager {
         if (services != null) {
             for (BluetoothGattService s : services) {
                 for (BluetoothGattCharacteristic c : s.getCharacteristics()) {
-                    if (c != null && c.getUuid() != null && c.getUuid().toString().equalsIgnoreCase(charUuid.toString())) {
+                    if (c != null && c.getUuid() != null && c.getUuid().equals(charUuid)) {
                         targetChar = c;
                         break;
                     }
@@ -323,7 +326,7 @@ public class BleManager {
         if (services != null) {
             for (BluetoothGattService s : services) {
                 for (BluetoothGattCharacteristic c : s.getCharacteristics()) {
-                    if (c != null && c.getUuid() != null && c.getUuid().toString().equalsIgnoreCase(charUuid.toString())) {
+                    if (c != null && c.getUuid() != null && c.getUuid().equals(charUuid)) {
                         targetChar = c;
                         break;
                     }
@@ -409,9 +412,21 @@ public class BleManager {
             BluetoothDevice device = (gatt != null) ? gatt.getDevice() : null;
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 Log.d(TAG, "GATT connecté");
+                // reset retry counter on new connection
+                serviceDiscoveryRetries = 0;
                 mainHandler.post(() -> listener.onConnected(device));
                 try {
-                    gatt.discoverServices();
+                    // some devices require a short delay before service discovery succeeds
+                    final BluetoothGatt localGatt = gatt;
+                    mainHandler.postDelayed(() -> {
+                        try {
+                            Log.d(TAG, "Lancement delayed de discoverServices()");
+                            if (localGatt != null) localGatt.discoverServices();
+                        } catch (SecurityException e) {
+                            notifyError("discoverServices permission refusée");
+                            Log.w(TAG, "discoverServices SecurityException", e);
+                        }
+                    }, 500);
                 } catch (SecurityException e) {
                     notifyError("discoverServices permission refusée");
                     Log.w(TAG, "discoverServices SecurityException", e);
@@ -426,9 +441,24 @@ public class BleManager {
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d(TAG, "Services découverts");
+                // reset retry counter on success
+                serviceDiscoveryRetries = 0;
                 mainHandler.post(() -> listener.onServicesDiscovered(gatt));
             } else {
                 notifyError("Services discovery failed: " + status);
+                // try a limited number of retries after a short delay
+                if (serviceDiscoveryRetries < MAX_SERVICE_DISCOVERY_RETRIES) {
+                    serviceDiscoveryRetries++;
+                    Log.w(TAG, "Retrying discoverServices in 500ms (attempt " + serviceDiscoveryRetries + ")");
+                    mainHandler.postDelayed(() -> {
+                        try {
+                            if (bluetoothGatt != null) bluetoothGatt.discoverServices();
+                        } catch (SecurityException se) {
+                            notifyError("discoverServices retry permission refusée");
+                            Log.w(TAG, "discoverServices retry SecurityException", se);
+                        }
+                    }, 500);
+                }
             }
         }
 
@@ -510,5 +540,49 @@ public class BleManager {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) sb.append(String.format("%02X ", b));
         return sb.toString().trim();
+    }
+
+    /**
+     * Try to refresh the GATT cache using hidden API. Returns true if the call succeeded.
+     * This helps when Android caches services and doesn't show newly exposed services.
+     */
+    private boolean refreshDeviceCache(BluetoothGatt gatt) {
+        if (gatt == null) return false;
+        try {
+            java.lang.reflect.Method refresh = gatt.getClass().getMethod("refresh");
+            if (refresh != null) {
+                boolean result = (boolean) refresh.invoke(gatt);
+                Log.d(TAG, "refreshDeviceCache invoked -> " + result);
+                return result;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "refreshDeviceCache failed", e);
+        }
+        return false;
+    }
+
+    /**
+     * Expose a safe public method to trigger service discovery again.
+     */
+    @SuppressLint("MissingPermission")
+    public void discoverServices() {
+        if (bluetoothGatt == null) {
+            notifyError("GATT non disponible pour discoverServices");
+            return;
+        }
+        try {
+            // attempt to refresh cache before discovery to avoid stale service lists
+            try {
+                refreshDeviceCache(bluetoothGatt);
+            } catch (Throwable ignored) { }
+            boolean ok = bluetoothGatt.discoverServices();
+            Log.d(TAG, "discoverServices requested -> " + ok);
+        } catch (SecurityException se) {
+            notifyError("discoverServices permission refusée");
+            Log.w(TAG, "discoverServices SecurityException", se);
+        } catch (Exception e) {
+            notifyError("discoverServices error: " + e.getMessage());
+            Log.w(TAG, "discoverServices Exception", e);
+        }
     }
 }

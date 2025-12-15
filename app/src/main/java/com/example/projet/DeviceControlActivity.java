@@ -20,11 +20,21 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.appbar.MaterialToolbar;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
+import android.os.Handler;
+import android.os.Looper;
 
 public class DeviceControlActivity extends AppCompatActivity implements BleEventListener,
         MicsHandler.MicsListener, AicsHandler.AicsListener {
 
     private static final String TAG = "DeviceControlAct";
+    // UUID canonical for AICS service (Audio Input Control Service)
+    private static final UUID AICS_SERVICE_UUID = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
+
+    // activity-level retry for service discovery
+    private int serviceDiscoveryRetries = 0;
+    private static final int MAX_SERVICE_DISCOVERY_RETRIES = 3;
 
     private BleManager bleManager;
     private MicsHandler micsHandler;
@@ -64,6 +74,7 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         unmuteButton = findViewById(R.id.unmuteButton);
         disconnectButton = findViewById(R.id.disconnectButton);
         //disableCccdButton = findViewById(R.id.disableCccdButton); // peut être null si non présent
+
         // Toolbar navigation
         if (topAppBar != null) {
             topAppBar.setNavigationOnClickListener(v -> {
@@ -82,6 +93,24 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         // Mettre le titre du toolbar et le deviceNameView
         if (topAppBar != null) topAppBar.setTitle(initialName);
         if (deviceNameView != null) deviceNameView.setText("Appareil : " + initialName);
+
+        // Debug: long-press on deviceNameView to force rediscover services
+        if (deviceNameView != null) {
+            deviceNameView.setOnLongClickListener(v -> {
+                if (bleManager != null) {
+                    serviceDiscoveryRetries = 0;
+                    uiController.showMessage("Relance discoverServices...");
+                    try {
+                        bleManager.discoverServices();
+                    } catch (Exception e) {
+                        Log.w(TAG, "discoverServices forced failed", e);
+                        uiController.showMessage("Erreur relance discovery");
+                    }
+                    return true;
+                }
+                return false;
+            });
+        }
 
         // Tenter la connexion si permission accordée
         if (currentDevice != null) {
@@ -231,6 +260,9 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
             String deviceName = (gatt.getDevice() != null) ? safeGetDeviceName(gatt.getDevice()) : "device";
             Log.d(TAG, "Services discovered for device: " + deviceName);
 
+            // Log all services/characteristics/descriptors to help debugging
+            logAllDiscoveredServices(gatt);
+
             boolean hasMcs = false;
             boolean hasAics = false;
 
@@ -238,16 +270,39 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
             if (services == null || services.isEmpty()) {
                 Log.w(TAG, "Aucun service découvert");
                 uiController.showMessage("Aucun service découvert");
+                // retry discovery from activity side (some devices need multiple attempts)
+                if (bleManager != null && serviceDiscoveryRetries < MAX_SERVICE_DISCOVERY_RETRIES) {
+                    serviceDiscoveryRetries++;
+                    Log.w(TAG, "Activity will retry discoverServices in 500ms (attempt " + serviceDiscoveryRetries + ")");
+                    uiController.showMessage("Retry discovery (" + serviceDiscoveryRetries + ")...");
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try {
+                            bleManager.discoverServices();
+                        } catch (Exception e) {
+                            Log.w(TAG, "discoverServices retry from Activity failed", e);
+                        }
+                    }, 500);
+                } else {
+                    setControlsEnabled(false);
+                }
             } else {
+                // reset activity retry counter on success
+                serviceDiscoveryRetries = 0;
                 for (android.bluetooth.BluetoothGattService s : services) {
                     String sUuid = (s.getUuid() != null) ? s.getUuid().toString() : "null";
                     Log.d(TAG, "Service UUID: " + sUuid);
 
                     if (s.getUuid() != null) {
-                        if (s.getUuid().equals(BleManager.MCS_SERVICE)) {
-                            hasMcs = true;
+                        // Compare MCS using the BleManager constant (expected to be a UUID)
+                        try {
+                            if (s.getUuid().equals(BleManager.MCS_SERVICE)) {
+                                hasMcs = true;
+                            }
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Comparaison MCS a échoué", t);
                         }
-                        if (s.getUuid().toString().equalsIgnoreCase("00001843-0000-1000-8000-00805f9b34fb")) {
+                        // Compare AICS using canonical UUID object
+                        if (AICS_SERVICE_UUID.equals(s.getUuid())) {
                             hasAics = true;
                         }
                     }
@@ -286,6 +341,38 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
             micsHandler.onServicesDiscovered(gatt);
             aicsHandler.onServicesDiscovered(gatt);
         });
+    }
+
+    // Utility: logs a detailed tree of discovered services/characteristics/descriptors
+    private void logAllDiscoveredServices(BluetoothGatt gatt) {
+        if (gatt == null) {
+            Log.d(TAG, "logAllDiscoveredServices: gatt is null");
+            return;
+        }
+        List<android.bluetooth.BluetoothGattService> services = gatt.getServices();
+        Log.d(TAG, "logAllDiscoveredServices: total services=" + (services == null ? 0 : services.size()));
+        if (services == null) return;
+        for (android.bluetooth.BluetoothGattService s : services) {
+            if (s == null) {
+                Log.d(TAG, "  service=null");
+                continue;
+            }
+            Log.d(TAG, "  Service: " + s.getUuid());
+            List<android.bluetooth.BluetoothGattCharacteristic> chars = s.getCharacteristics();
+            if (chars == null) continue;
+            for (android.bluetooth.BluetoothGattCharacteristic c : chars) {
+                if (c == null) {
+                    Log.d(TAG, "    characteristic=null");
+                    continue;
+                }
+                Log.d(TAG, "    Characteristic: " + c.getUuid() + " props=" + c.getProperties());
+                List<android.bluetooth.BluetoothGattDescriptor> descs = c.getDescriptors();
+                if (descs == null) continue;
+                for (android.bluetooth.BluetoothGattDescriptor d : descs) {
+                    Log.d(TAG, "      Descriptor: " + (d == null ? "null" : d.getUuid()));
+                }
+            }
+        }
     }
 
     @Override
