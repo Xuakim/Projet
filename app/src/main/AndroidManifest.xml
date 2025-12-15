@@ -9,9 +9,8 @@
     <!-- Nouvelles permissions Bluetooth pour Android 12 (API 31) et plus -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
-    <!-- Permission de localisation nécessaire pour le scan BLE sur Android 11 (API 30) et moins -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!-- Déclare que l'application utilise le Bluetooth Low Energy -->
     <uses-feature

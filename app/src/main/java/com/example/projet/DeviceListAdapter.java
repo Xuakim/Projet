@@ -1,7 +1,5 @@
 package com.example.projet;
 
-import static androidx.constraintlayout.helper.widget.MotionEffect.TAG;
-
 import android.Manifest;
 import android.bluetooth.BluetoothDevice;
 import android.content.Context;
@@ -16,55 +14,64 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.ViewHolder> {
 
-    private final List<BluetoothDevice> deviceList;
-    private final OnDeviceClickListener listener;
-    private final Context context;
+    private static final String TAG = "DeviceListAdapter";
 
     public interface OnDeviceClickListener {
         void onDeviceClick(BluetoothDevice device);
     }
 
-    public DeviceListAdapter(Context context, List<BluetoothDevice> deviceList, OnDeviceClickListener listener) {
-        this.deviceList = deviceList;
+    private final List<BluetoothDevice> deviceList = new ArrayList<>();
+    private final OnDeviceClickListener listener;
+    private final Context context;
+
+    public DeviceListAdapter(Context context, OnDeviceClickListener listener) {
+        this.context = context.getApplicationContext();
         this.listener = listener;
-        this.context = context;
+    }
+
+    public void setDevices(List<BluetoothDevice> devices) {
+        deviceList.clear();
+        if (devices != null) deviceList.addAll(devices);
+        notifyDataSetChanged();
+    }
+
+    public void addDevice(BluetoothDevice device) {
+        if (device == null) return;
+        if (!deviceList.contains(device)) {
+            deviceList.add(device);
+            notifyItemInserted(deviceList.size() - 1);
+        }
+    }
+
+    public void clear() {
+        deviceList.clear();
+        notifyDataSetChanged();
     }
 
     @NonNull
     @Override
-    public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.device_item, parent, false);
-        return new ViewHolder(view);
+    public DeviceListAdapter.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.device_item, parent, false);
+        return new ViewHolder(v);
     }
 
     @Override
-    public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+    public void onBindViewHolder(@NonNull DeviceListAdapter.ViewHolder holder, int position) {
         BluetoothDevice device = deviceList.get(position);
-
-        String name = null;
-
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                == PackageManager.PERMISSION_GRANTED) {
+        String displayName = safeGetDeviceName(device);
+        holder.deviceName.setText(displayName);
+        holder.itemView.setOnClickListener(v -> {
             try {
-                name = device.getName();
-            } catch (SecurityException e) {
-                Log.e(TAG, "Permission refusée pour accéder au nom du périphérique", e);
+                listener.onDeviceClick(device);
+            } catch (Exception e) {
+                Log.w(TAG, "Erreur lors du clic sur l'appareil", e);
             }
-        } else {
-            Log.w(TAG, "Permission BLUETOOTH_CONNECT manquante pour lire le nom du périphérique");
-        }
-
-        if (name == null || name.trim().isEmpty()) {
-            holder.deviceName.setText("Sans nom");
-        } else {
-            holder.deviceName.setText(name);
-        }
-
-        holder.itemView.setOnClickListener(v -> listener.onDeviceClick(device));
+        });
     }
 
     @Override
@@ -72,9 +79,29 @@ public class DeviceListAdapter extends RecyclerView.Adapter<DeviceListAdapter.Vi
         return deviceList.size();
     }
 
+    private String safeGetDeviceName(BluetoothDevice device) {
+        if (device == null) return "Sans nom";
+        try {
+            // Vérifier permission BLUETOOTH_CONNECT sur Android 12+
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                    || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+                String name = device.getName();
+                if (name != null && !name.trim().isEmpty()) return name;
+                // fallback : adresse si disponible et permission ok
+                try {
+                    String addr = device.getAddress();
+                    if (addr != null && !addr.trim().isEmpty()) return addr;
+                } catch (SecurityException ignored) { }
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Permission BLUETOOTH_CONNECT refusée pour getName()", e);
+        }
+        return "Sans nom";
+    }
+
     public static class ViewHolder extends RecyclerView.ViewHolder {
-        TextView deviceName;
-        TextView deviceAddress;
+        public final TextView deviceName;
+        public final TextView deviceAddress;
 
         public ViewHolder(@NonNull View itemView) {
             super(itemView);

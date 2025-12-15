@@ -1,241 +1,324 @@
 package com.example.projet;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
+import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.util.UUID;
 
 public class BleManager {
 
-    private static final String TAG = "BLE_MANAGER";
+    private static final String TAG = "BleManager";
 
     private final Context context;
-    private final UiController uiController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final BleEventListener listener;
 
+    private BluetoothLeScanner scanner;
     private BluetoothGatt bluetoothGatt;
-    private final AudioInputServiceHandler aicsHandler;
 
-    // UUID du service MCS
-    private static final UUID MCS_SERVICE =
-            UUID.fromString("0000184D-0000-1000-8000-00805f9b34fb");
-    // UUID de la caractéristique Mute (MCS)
-    private static final UUID MCS_MUTE =
-            UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb");
-    // UUID du descripteur CCCD
-    private static final UUID CCCD =
-            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+    // MICS / AICS UUIDs
+    public static final UUID MCS_SERVICE = UUID.fromString("0000184D-0000-1000-8000-00805f9b34fb");
+    public static final UUID MCS_MUTE = UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb");
+    public static final UUID AICS_SERVICE = UUID.fromString("00001843-0000-1000-8000-00805f9b34fb");
+    public static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    public BleManager(Context context, UiController uiController) {
-        this.context = context;
-        this.uiController = uiController;
-        this.aicsHandler = new AudioInputServiceHandler(context, uiController);
+    public interface BleEventListener {
+        void onScanResult(BluetoothDevice device);
+        void onConnected(BluetoothDevice device);
+        void onDisconnected(BluetoothDevice device);
+        void onServicesDiscovered(BluetoothGatt gatt);
+        void onCharacteristicRead(BluetoothGattCharacteristic characteristic);
+        void onCharacteristicChanged(BluetoothGattCharacteristic characteristic);
+        void onDescriptorWrite(BluetoothGattDescriptor descriptor, int status);
+        void onError(String message);
     }
 
-    /** Connexion à un périphérique BLE */
-    public void connectToDevice(BluetoothDevice device) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                bluetoothGatt = device.connectGatt(context, false, gattCallback);
-                mainHandler.post(() -> uiController.showMessage(
-                        "Connexion en cours à " +
-                                (device.getName() != null ? device.getName() : "Appareil inconnu")));
-            } catch (SecurityException e) {
-                mainHandler.post(() ->
-                        uiController.showMessage("Connexion refusée : permission manquante"));
-            }
-        } else {
-            mainHandler.post(() ->
-                    uiController.showMessage("Permission BLUETOOTH_CONNECT non accordée"));
+    public BleManager(Context context, BleEventListener listener) {
+        this.context = context.getApplicationContext();
+        this.listener = listener;
+        BluetoothAdapter adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+        if (adapter != null) {
+            this.scanner = adapter.getBluetoothLeScanner();
         }
     }
 
-    /** Déconnexion */
+    // --- Scan ---
+    /**
+     * Démarre le scan BLE de façon sûre :
+     * - vérifie explicitement la permission BLUETOOTH_SCAN sur Android S+,
+     * - capture SecurityException pour éviter crash et avertissements lint.
+     */
+    @SuppressLint("MissingPermission")
+    public void startScan() {
+        if (scanner == null) {
+            notifyError("Scanner BLE non disponible");
+            return;
+        }
+
+        // Vérification explicite de permission pour satisfaire lint et runtime
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                notifyError("Permission BLUETOOTH_SCAN manquante");
+                return;
+            }
+        } else {
+            // Pour les anciennes versions, on peut exiger ACCESS_FINE_LOCATION si nécessaire
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                // Optionnel : vérifier ACCESS_FINE_LOCATION si ton app le requiert pour le scan
+                // if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                //     notifyError("Permission ACCESS_FINE_LOCATION manquante");
+                //     return;
+                // }
+            }
+        }
+
+        try {
+            scanner.startScan(scanCallback);
+            Log.d(TAG, "Scan démarré");
+        } catch (SecurityException se) {
+            notifyError("Démarrage du scan refusé : permission manquante");
+            Log.w(TAG, "startScan SecurityException", se);
+        } catch (Exception e) {
+            notifyError("Erreur démarrage scan: " + e.getMessage());
+            Log.w(TAG, "startScan Exception", e);
+        }
+    }
+
+    /**
+     * Arrête le scan BLE de façon sûre (vérifie permission et capture SecurityException).
+     */
+    @SuppressLint("MissingPermission")
+    public void stopScan() {
+        if (scanner == null) {
+            return;
+        }
+
+        // Vérification explicite de permission pour éviter lint
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "Permission BLUETOOTH_SCAN manquante pour stopScan");
+                return;
+            }
+        }
+
+        try {
+            scanner.stopScan(scanCallback);
+            Log.d(TAG, "Scan arrêté");
+        } catch (SecurityException se) {
+            notifyError("Arrêt du scan refusé : permission manquante");
+            Log.w(TAG, "stopScan SecurityException", se);
+        } catch (Exception e) {
+            notifyError("Erreur arrêt scan: " + e.getMessage());
+            Log.w(TAG, "stopScan Exception", e);
+        }
+    }
+
+    private final ScanCallback scanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            BluetoothDevice device = result.getDevice();
+            mainHandler.post(() -> listener.onScanResult(device));
+        }
+    };
+
+    // --- Connect / Disconnect ---
+    public void connect(BluetoothDevice device) {
+        if (!hasConnectPermission()) {
+            notifyError("Permission BLUETOOTH_CONNECT manquante");
+            return;
+        }
+        if (device == null) {
+            notifyError("Device null");
+            return;
+        }
+        try {
+            bluetoothGatt = device.connectGatt(context, false, gattCallback);
+            Log.d(TAG, "Tentative de connexion à " + device.getAddress());
+        } catch (SecurityException e) {
+            notifyError("Connexion refusée : permission manquante");
+        }
+    }
+
     public void disconnect() {
         if (bluetoothGatt != null) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                    == PackageManager.PERMISSION_GRANTED) {
-                try {
-                    bluetoothGatt.disconnect();
-                    bluetoothGatt.close();
-                    mainHandler.post(() -> uiController.showMessage("Déconnecté"));
-                } catch (SecurityException e) {
-                    mainHandler.post(() ->
-                            uiController.showMessage("Déconnexion refusée : permission manquante"));
-                }
-            } else {
-                mainHandler.post(() ->
-                        uiController.showMessage("Permission BLUETOOTH_CONNECT manquante pour déconnexion"));
-            }
-            bluetoothGatt = null;
-        }
-    }
-
-    /** Écriture sur la caractéristique Mute (MCS) */
-    public void writeMute(boolean unmute) {
-        if (bluetoothGatt == null) return;
-
-        BluetoothGattService mcs = bluetoothGatt.getService(MCS_SERVICE);
-        if (mcs == null) return;
-
-        BluetoothGattCharacteristic muteChar = mcs.getCharacteristic(MCS_MUTE);
-        if (muteChar == null) return;
-
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                == PackageManager.PERMISSION_GRANTED) {
             try {
-                // MICS : 0x00 = Not Muted (Unmute), 0x01 = Muted
-                byte[] value = new byte[]{ (byte) (unmute ? 0x00 : 0x01) };
-                muteChar.setValue(value);
-                bluetoothGatt.writeCharacteristic(muteChar);
+                bluetoothGatt.disconnect();
+                bluetoothGatt.close();
             } catch (SecurityException e) {
-                mainHandler.post(() ->
-                        uiController.showMessage("Impossible d'écrire mute : permission refusée"));
+                notifyError("Permission refusée pour déconnecter");
+            } finally {
+                bluetoothGatt = null;
             }
-        } else {
-            mainHandler.post(() ->
-                    uiController.showMessage("Permission BLUETOOTH_CONNECT manquante pour mute"));
         }
     }
 
-    /** Callback GATT principal */
-    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+    /**
+     * Getter sécurisé pour accéder au BluetoothGatt courant.
+     */
+    public synchronized BluetoothGatt getBluetoothGatt() {
+        return bluetoothGatt;
+    }
 
+    // --- Read / Write / Notifications ---
+    public void safeReadCharacteristic(BluetoothGattCharacteristic characteristic) {
+        BluetoothGatt gatt = getBluetoothGatt();
+        if (gatt == null || characteristic == null) return;
+        if (!hasConnectPermission()) {
+            notifyError("Permission BLUETOOTH_CONNECT manquante pour lecture");
+            return;
+        }
+        try {
+            boolean ok = gatt.readCharacteristic(characteristic);
+            Log.d(TAG, "readCharacteristic " + characteristic.getUuid() + " -> " + ok);
+        } catch (SecurityException e) {
+            notifyError("Lecture caractéristique refusée : permission");
+        }
+    }
+
+    public void writeCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
+        BluetoothGatt gatt = getBluetoothGatt();
+        if (gatt == null || characteristic == null) return;
+        if (!hasConnectPermission()) {
+            notifyError("Permission BLUETOOTH_CONNECT manquante pour écriture");
+            return;
+        }
+        characteristic.setValue(value);
+        try {
+            boolean ok = gatt.writeCharacteristic(characteristic);
+            Log.d(TAG, "writeCharacteristic " + characteristic.getUuid() + " -> " + ok);
+        } catch (SecurityException e) {
+            notifyError("Écriture caractéristique refusée : permission");
+        }
+    }
+
+    public void enableNotifications(BluetoothGattCharacteristic characteristic, boolean enable) {
+        BluetoothGatt gatt = getBluetoothGatt();
+        if (gatt == null || characteristic == null) return;
+        if (!hasConnectPermission()) {
+            notifyError("Permission BLUETOOTH_CONNECT manquante pour notifications");
+            return;
+        }
+        try {
+            gatt.setCharacteristicNotification(characteristic, enable);
+            BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD);
+            if (descriptor != null) {
+                writeCccd(gatt, descriptor, enable);
+            } else {
+                Log.w(TAG, "CCCD non trouvé pour " + characteristic.getUuid());
+            }
+        } catch (SecurityException e) {
+            notifyError("Activation notifications refusée : permission");
+        }
+    }
+
+    private void writeCccd(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, boolean enable) {
+        if (gatt == null || descriptor == null) return;
+        byte[] value = enable ? BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE : BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(descriptor, value);
+            } else {
+                descriptor.setValue(value);
+                gatt.writeDescriptor(descriptor);
+            }
+            Log.d(TAG, "writeCccd requested for " + descriptor.getUuid());
+        } catch (SecurityException e) {
+            notifyError("Écriture CCCD refusée : permission");
+        }
+    }
+
+    // --- GATT callback ---
+    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                    == PackageManager.PERMISSION_GRANTED) {
+            BluetoothDevice device = (gatt != null) ? gatt.getDevice() : null;
+            if (newState == BluetoothGatt.STATE_CONNECTED) {
+                Log.d(TAG, "GATT connecté");
+                mainHandler.post(() -> listener.onConnected(device));
                 try {
-                    if (newState == BluetoothGatt.STATE_CONNECTED) {
-                        Log.d(TAG, "Connecté au périphérique");
-                        mainHandler.post(() -> uiController.showMessage("Connecté"));
-                        gatt.discoverServices();
-                    } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                        Log.d(TAG, "Déconnecté du périphérique");
-                        mainHandler.post(() -> uiController.showMessage("Déconnecté"));
-                    }
+                    gatt.discoverServices();
                 } catch (SecurityException e) {
-                    mainHandler.post(() ->
-                            uiController.showMessage("Erreur de connexion : permission refusée"));
+                    notifyError("discoverServices permission refusée");
                 }
-            } else {
-                mainHandler.post(() ->
-                        uiController.showMessage("Permission BLUETOOTH_CONNECT manquante pour gérer l'état de connexion"));
+            } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                Log.d(TAG, "GATT déconnecté");
+                mainHandler.post(() -> listener.onDisconnected(device));
             }
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                BluetoothGattService mcs = gatt.getService(MCS_SERVICE);
-                if (mcs != null) {
-                    BluetoothGattCharacteristic muteChar = mcs.getCharacteristic(MCS_MUTE);
-                    if (muteChar != null) {
-                        safeReadCharacteristic(gatt, muteChar, "Mute (MCS)");
-                        enableNotifications(gatt, muteChar);
-                    }
-                }
-                aicsHandler.onServiceDiscovered(gatt);
+                Log.d(TAG, "Services découverts");
+                mainHandler.post(() -> listener.onServicesDiscovered(gatt));
+            } else {
+                notifyError("Services discovery failed: " + status);
             }
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt,
-                                         BluetoothGattCharacteristic characteristic,
-                                         int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                handleMuteOrAics(characteristic);
+                mainHandler.post(() -> listener.onCharacteristicRead(characteristic));
+            } else {
+                notifyError("Characteristic read failed: " + status);
             }
         }
 
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt,
-                                            BluetoothGattCharacteristic characteristic) {
-            handleMuteOrAics(characteristic);
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            mainHandler.post(() -> listener.onCharacteristicChanged(characteristic));
         }
 
         @Override
-        public void onCharacteristicWrite(BluetoothGatt gatt,
-                                          BluetoothGattCharacteristic characteristic,
-                                          int status) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                handleMuteOrAics(characteristic);
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                notifyError("Characteristic write failed: " + status);
             }
+        }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            mainHandler.post(() -> listener.onDescriptorWrite(descriptor, status));
         }
     };
 
-    /** Lecture sécurisée d’une caractéristique */
-    private void safeReadCharacteristic(BluetoothGatt gatt,
-                                        BluetoothGattCharacteristic characteristic,
-                                        String label) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                gatt.readCharacteristic(characteristic);
-                Log.d(TAG, "Lecture de " + label);
-            } catch (SecurityException e) {
-                mainHandler.post(() ->
-                        uiController.showMessage("Impossible de lire " + label + " : permission refusée"));
-            }
+    // --- Helpers ---
+    private boolean hasScanPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
         } else {
-            mainHandler.post(() ->
-                    uiController.showMessage("Permission BLUETOOTH_CONNECT manquante pour " + label));
+            return true;
         }
     }
 
-    /** Activer les notifications pour une caractéristique */
-    private void enableNotifications(BluetoothGatt gatt,
-                                     BluetoothGattCharacteristic characteristic) {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-
-        gatt.setCharacteristicNotification(characteristic, true);
-        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD);
-        if (descriptor != null) {
-            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            gatt.writeDescriptor(descriptor);
-        }
-    }
-
-    /** Gestion commune des caractéristiques Mute et AICS */
-    private void handleMuteOrAics(BluetoothGattCharacteristic characteristic) {
-        UUID uuid = characteristic.getUuid();
-        byte[] value = characteristic.getValue();
-
-        if (uuid.equals(MCS_MUTE)) {
-            if (value != null && value.length > 0) {
-                // MICS : 0x00 = Not Muted, 0x01 = Muted
-                boolean isUnmuted = (value[0] == 0x00);
-                String status = isUnmuted ? "Unmuted" : "Muted";
-                mainHandler.post(() -> uiController.updateMicStatus(status));
-            }
+    private boolean hasConnectPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
         } else {
-            aicsHandler.handleCharacteristic(characteristic);
+            return true;
         }
     }
 
-    /** Conversion simple des bytes en hexadécimal (non utilisé mais conservé) */
-    private String parseBytes(byte[] data) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : data) {
-            sb.append(String.format("%02X", b));
-        }
-        return sb.toString();
+    private void notifyError(String message) {
+        Log.w(TAG, message);
+        mainHandler.post(() -> listener.onError(message));
     }
 }

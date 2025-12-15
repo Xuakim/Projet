@@ -1,170 +1,280 @@
 package com.example.projet;
 
 import android.Manifest;
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothManager;
-import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanResult;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 
-public class MainActivity extends AppCompatActivity implements DeviceListAdapter.OnDeviceClickListener {
+/**
+ * MainActivity : scan BLE, affichage liste d'appareils et navigation vers DeviceControlActivity.
+ * Utilise BleManager centralisé pour le scan et les callbacks.
+ */
+public class MainActivity extends AppCompatActivity implements BleManager.BleEventListener,
+        DeviceListAdapter.OnDeviceClickListener {
 
-    private static final int REQUEST_PERMISSIONS = 1;
+    private static final String TAG = "MainActivity";
 
-    private BluetoothLeScanner bluetoothLeScanner;
-    private final ArrayList<BluetoothDevice> deviceList = new ArrayList<>();
+    private BleManager bleManager;
     private DeviceListAdapter deviceListAdapter;
+    private final ArrayList<BluetoothDevice> deviceList = new ArrayList<>();
+
+    // Permissions request via Activity Result API
+    private final ActivityResultLauncher<String[]> permissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
+                boolean allGranted = true;
+                for (Boolean granted : result.values()) {
+                    if (!Boolean.TRUE.equals(granted)) {
+                        allGranted = false;
+                        break;
+                    }
+                }
+                if (allGranted) {
+                    startBleScan();
+                } else {
+                    showMessage("Permissions refusées, impossible de scanner.");
+                }
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // 1. Check for BLE feature
-        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
-            showMessage("Bluetooth LE n'est pas supporté sur cet appareil.");
-            finish();
-            return;
-        }
+        // Initialisation BleManager
+        bleManager = new BleManager(getApplicationContext(), this);
 
-        // 2. Get BluetoothManager and check for null
-        final BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-        if (bluetoothManager == null) {
-            showMessage("Impossible d'accéder au service Bluetooth.");
-            finish();
-            return;
-        }
+        // RecyclerView + Adapter (nouvelle signature : Context, OnDeviceClickListener)
+        RecyclerView recyclerView = findViewById(R.id.deviceListView);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        deviceListAdapter = new DeviceListAdapter(this, this);
+        recyclerView.setAdapter(deviceListAdapter);
 
-        // 3. Get BluetoothAdapter and check for null
-        BluetoothAdapter bluetoothAdapter = bluetoothManager.getAdapter();
-        if (bluetoothAdapter == null) {
-            showMessage("Bluetooth n'est pas supporté sur cet appareil.");
-            finish();
-            return;
-        }
-
-        // 4. Check if Bluetooth is enabled
-        if (!bluetoothAdapter.isEnabled()) {
-            showMessage("Veuillez activer le Bluetooth et redémarrer l'application.");
-            finish();
-            return;
-        }
-
-        // 5. Get Scanner and check for null
-        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
-        if (bluetoothLeScanner == null) {
-            showMessage("Impossible d'initialiser le scanner BLE. Vérifiez les permissions et l'état du Bluetooth.");
-            finish();
-            return;
-        }
-
-        RecyclerView deviceRecyclerView = findViewById(R.id.deviceListView);
-        deviceRecyclerView.setLayoutManager(new LinearLayoutManager(this));
-        deviceListAdapter = new DeviceListAdapter(this, deviceList, this);
-        deviceRecyclerView.setAdapter(deviceListAdapter);
-
+        // Démarrer le flux : vérifier permissions puis scanner
         checkPermissionsAndStartScan();
     }
 
-    private void checkPermissionsAndStartScan() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED ||
-                    ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-                    ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this,
-                        new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_CONNECT},
-                        REQUEST_PERMISSIONS);
-                return;
-            }
-        }
-        startBleScan();
-    }
-
-    private void startBleScan() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                deviceList.clear();
-                deviceListAdapter.notifyDataSetChanged();
-                bluetoothLeScanner.startScan(scanCallback);
-                showMessage("Scan en cours...");
-            } catch (SecurityException e) {
-                showMessage("Impossible de scanner, permission refusée");
-            }
-        } else {
-            showMessage("Permission de scan manquante");
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Relancer le scan si permissions déjà accordées
+        if (hasRequiredScanPermissions()) {
+            startBleScan();
         }
     }
-
-    private final ScanCallback scanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, @NonNull ScanResult result) {
-            BluetoothDevice device = result.getDevice();
-            if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                String deviceName = device.getName();
-                if (deviceName != null && !deviceName.trim().isEmpty() && !deviceList.contains(device)) {
-                    deviceList.add(device);
-                    runOnUiThread(() -> deviceListAdapter.notifyDataSetChanged());
-                }
-            }
-        }
-    };
 
     @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    protected void onPause() {
+        super.onPause();
+        // Stopper le scan pour économiser la batterie
+        stopBleScan();
+    }
 
-        if (requestCode == REQUEST_PERMISSIONS) {
-            boolean allGranted = true;
-            for (int grantResult : grantResults) {
-                if (grantResult != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                    break;
-                }
-            }
-            if (allGranted) {
-                startBleScan();
-            } else {
-                showMessage("Permissions refusées, impossible de continuer.");
-            }
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Nettoyage
+        stopBleScan();
+        if (bleManager != null) {
+            bleManager.disconnect();
         }
     }
 
+    // -------------------------
+    // Permissions
+    // -------------------------
+    private boolean hasRequiredScanPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+                    && ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        } else {
+            // Pour les anciennes versions, ACCESS_FINE_LOCATION peut être requis pour le scan BLE
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        }
+    }
+
+    private void checkPermissionsAndStartScan() {
+        if (hasRequiredScanPermissions()) {
+            startBleScan();
+            return;
+        }
+
+        // Construire la liste de permissions à demander
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissionLauncher.launch(new String[]{
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.ACCESS_FINE_LOCATION // facultatif mais utile pour compatibilité
+            });
+        } else {
+            permissionLauncher.launch(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION
+            });
+        }
+    }
+
+    // -------------------------
+    // Scan control
+    // -------------------------
+    private void startBleScan() {
+        deviceList.clear();
+        deviceListAdapter.clear();
+        try {
+            bleManager.startScan();
+            showMessage("Scan BLE démarré...");
+        } catch (Exception e) {
+            showMessage("Erreur démarrage scan: " + e.getMessage());
+        }
+    }
+
+    private void stopBleScan() {
+        try {
+            bleManager.stopScan();
+        } catch (Exception ignored) {
+        }
+    }
+
+    // -------------------------
+    // BleManager.BleEventListener callbacks
+    // -------------------------
+    @Override
+    public void onScanResult(BluetoothDevice device) {
+        // Filtrer et ajouter uniquement si pas déjà présent
+        runOnUiThread(() -> {
+            try {
+                // On ajoute tous les devices (même sans nom) pour plus de visibilité.
+                // DeviceListAdapter gère l'affichage sécurisé du nom (safeGetDeviceName).
+                deviceListAdapter.addDevice(device);
+            } catch (SecurityException se) {
+                showMessage("Permission BLUETOOTH_CONNECT manquante pour lire le nom du périphérique");
+            }
+        });
+    }
+
+    @Override
+    public void onConnected(BluetoothDevice device) {
+        runOnUiThread(() -> showMessage("Connecté à " + safeGetDeviceName(device)));
+    }
+
+    @Override
+    public void onDisconnected(BluetoothDevice device) {
+        runOnUiThread(() -> showMessage("Déconnecté"));
+    }
+
+    @Override
+    public void onServicesDiscovered(android.bluetooth.BluetoothGatt gatt) {
+        // Pas d'action ici dans la liste ; DeviceControlActivity gère la découverte après connexion
+    }
+
+    @Override
+    public void onCharacteristicRead(android.bluetooth.BluetoothGattCharacteristic characteristic) {
+        // Pas utilisé dans MainActivity
+    }
+
+    @Override
+    public void onCharacteristicChanged(android.bluetooth.BluetoothGattCharacteristic characteristic) {
+        // Pas utilisé dans MainActivity
+    }
+
+    @Override
+    public void onDescriptorWrite(android.bluetooth.BluetoothGattDescriptor descriptor, int status) {
+        // Pas utilisé ici
+    }
+
+    @Override
+    public void onError(String message) {
+        runOnUiThread(() -> showMessage("Erreur BLE: " + message));
+    }
+
+    // -------------------------
+    // DeviceListAdapter.OnDeviceClickListener
+    // -------------------------
     @Override
     public void onDeviceClick(BluetoothDevice device) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                Intent intent = new Intent(MainActivity.this, DeviceControlActivity.class);
-                intent.putExtra("device", device);
-                startActivity(intent);
-            } catch (SecurityException e) {
-                showMessage("Impossible d'ouvrir la page, permission refusée");
-            }
+        // Vérifier permission BLUETOOTH_CONNECT avant d'ouvrir l'activité de contrôle
+        boolean ok;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ok = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
         } else {
-            showMessage("Permission BLUETOOTH_CONNECT manquante");
+            ok = true;
         }
+
+        if (!ok) {
+            showMessage("Permission BLUETOOTH_CONNECT manquante");
+            checkPermissionsAndStartScan();
+            return;
+        }
+
+        // Stopper le scan avant de se connecter pour économiser ressources
+        stopBleScan();
+
+        Intent intent = new Intent(this, DeviceControlActivity.class);
+        intent.putExtra("device", device); // BluetoothDevice est Parcelable
+        startActivity(intent);
     }
 
+    // -------------------------
+    // Utilitaires UI
+    // -------------------------
     private void showMessage(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * Récupère le nom de l'appareil de façon sûre : vérifie la permission et capture SecurityException.
+     * Retourne une valeur lisible (nom, adresse ou "device") sans lancer d'exception.
+     */
+    private String safeGetDeviceName(BluetoothDevice device) {
+        if (device == null) return "device";
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                String n = device.getName();
+                if (n != null && !n.trim().isEmpty()) return n;
+                // fallback to address if name absent and permission still allows getAddress()
+                try {
+                    String addr = device.getAddress();
+                    if (addr != null && !addr.trim().isEmpty()) return addr;
+                } catch (SecurityException se) {
+                    // ignore, we'll return generic label below
+                }
+            }
+        } catch (SecurityException e) {
+            // log if tu veux
+        }
+        return "device";
+    }
+
+    // -------------------------
+    // Compatibilité avec l'ancienne API (optionnel)
+    // -------------------------
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        // Pour compatibilité si tu utilises encore l'ancienne API
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        boolean allGranted = true;
+        for (int r : grantResults) {
+            if (r != PackageManager.PERMISSION_GRANTED) {
+                allGranted = false;
+                break;
+            }
+        }
+        if (allGranted) {
+            startBleScan();
+        } else {
+            showMessage("Permissions refusées, impossible de scanner.");
+        }
     }
 }

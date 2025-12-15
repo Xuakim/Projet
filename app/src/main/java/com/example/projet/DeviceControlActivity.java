@@ -1,9 +1,13 @@
 package com.example.projet;
 
 import android.Manifest;
-import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -11,71 +15,210 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
-public class DeviceControlActivity extends AppCompatActivity {
+public class DeviceControlActivity extends AppCompatActivity implements BleManager.BleEventListener,
+        MicsHandler.MicsListener, AicsHandler.AicsListener {
+
+    private static final String TAG = "DeviceControlAct";
 
     private BleManager bleManager;
+    private MicsHandler micsHandler;
+    private AicsHandler aicsHandler;
     private UiController uiController;
-    private TextView statusText;
+
+    private TextView deviceNameView;
     private ImageView microphoneIcon;
+    private Button muteButton;
+    private Button unmuteButton;
+    private Button disconnectButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_device_control);
 
+        uiController = new UiController(this);
+        bleManager = new BleManager(this, this);
+        micsHandler = new MicsHandler(bleManager, this);
+        aicsHandler = new AicsHandler(bleManager, this);
+
+        deviceNameView = findViewById(R.id.deviceName);
         microphoneIcon = findViewById(R.id.microphoneIcon);
-        Button muteButton = findViewById(R.id.muteButton);
-        Button unmuteButton = findViewById(R.id.unmuteButton);
-        statusText = findViewById(R.id.statusText);
+        muteButton = findViewById(R.id.muteButton);
+        unmuteButton = findViewById(R.id.unmuteButton);
+        disconnectButton = findViewById(R.id.disconnectButton);
 
-        uiController = new UiController(this, statusText, null);
-        bleManager = new BleManager(this, uiController);
-
-        TextView deviceName = findViewById(R.id.deviceName);
-        BluetoothDevice device = getIntent().getParcelableExtra("device");
-
+        // Récupération du BluetoothDevice passé par l'intent
+        android.bluetooth.BluetoothDevice device = getIntent().getParcelableExtra("device");
         if (device != null) {
-            // Vérification de la permission avant getName()
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
-                    == PackageManager.PERMISSION_GRANTED) {
-                try {
-                    String name = (device.getName() != null) ? device.getName() : "Appareil inconnu";
-                    deviceName.setText("Appareil : " + name);
-                } catch (SecurityException e) {
-                    deviceName.setText("Appareil : permission refusée");
-                }
+            // Utiliser safeGetDeviceName pour éviter SecurityException si permission manquante
+            String name = safeGetDeviceName(device);
+            deviceNameView.setText("Appareil : " + name);
 
-                try {
-                    bleManager.connectToDevice(device);
-                } catch (SecurityException e) {
-                    uiController.showMessage("Connexion refusée : permission manquante");
-                }
+            // Connect if permission granted (ou si API < S)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                bleManager.connect(device);
+                uiController.showMessage("Connexion en cours...");
             } else {
-                deviceName.setText("Appareil : permission manquante");
-                uiController.showMessage("Permission BLUETOOTH_CONNECT non accordée");
+                uiController.showMessage("Permission BLUETOOTH_CONNECT manquante");
             }
+        } else {
+            deviceNameView.setText("Appareil : aucun");
         }
 
-        // Action du bouton Mute
         muteButton.setOnClickListener(v -> {
-            statusText.setText("Muted");
-            bleManager.writeMute(false);
+            uiController.updateMicStatus("Muting...");
+            BluetoothGatt gatt = bleManager.getBluetoothGatt();
+            if (gatt != null) {
+                micsHandler.setMute(gatt, false);
+            } else {
+                uiController.showMessage("GATT non disponible");
+            }
             microphoneIcon.setImageResource(R.drawable.mic_off);
-            // MicServiceHandler: mute
         });
 
-        // Action du bouton Unmute
         unmuteButton.setOnClickListener(v -> {
-            statusText.setText("Unmuted");
-            bleManager.writeMute(true);
+            uiController.updateMicStatus("Unmuting...");
+            BluetoothGatt gatt = bleManager.getBluetoothGatt();
+            if (gatt != null) {
+                micsHandler.setMute(gatt, true);
+            } else {
+                uiController.showMessage("GATT non disponible");
+            }
             microphoneIcon.setImageResource(R.drawable.mic_on);
-            // MicServiceHandler: unmute
         });
 
-        Button disconnectButton = findViewById(R.id.disconnectButton);
         disconnectButton.setOnClickListener(v -> {
             bleManager.disconnect();
-            finish(); // revient à MainActivity
+            finish();
         });
+    }
+
+    /**
+     * Récupère le nom de l'appareil de façon sûre : vérifie la permission et capture SecurityException.
+     * Retourne une valeur lisible (nom, adresse ou "device") sans lancer d'exception.
+     */
+    private String safeGetDeviceName(android.bluetooth.BluetoothDevice device) {
+        if (device == null) return "device";
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                    || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                String n = device.getName();
+                if (n != null && !n.trim().isEmpty()) return n;
+                // fallback to address if name absent and permission still allows getAddress()
+                try {
+                    String addr = device.getAddress();
+                    if (addr != null && !addr.trim().isEmpty()) return addr;
+                } catch (SecurityException se) {
+                    // ignore, we'll return generic label below
+                }
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Permission BLUETOOTH_CONNECT refusée pour getName()", e);
+        }
+        return "device";
+    }
+
+    // -------------------------
+    // BleManager.BleEventListener callbacks
+    // -------------------------
+    @Override
+    public void onScanResult(android.bluetooth.BluetoothDevice device) {
+        // non utilisé dans cette activité
+    }
+
+    @Override
+    public void onConnected(android.bluetooth.BluetoothDevice device) {
+        String name = safeGetDeviceName(device);
+        uiController.showMessage("Connecté à " + name);
+    }
+
+    @Override
+    public void onDisconnected(android.bluetooth.BluetoothDevice device) {
+        uiController.showMessage("Déconnecté");
+    }
+
+    @Override
+    public void onServicesDiscovered(BluetoothGatt gatt) {
+        uiController.showMessage("Services découverts");
+        // déléguer aux handlers
+        micsHandler.onServicesDiscovered(gatt);
+        aics_handler_handle_services(gatt);
+    }
+
+    private void aics_handler_handle_services(BluetoothGatt gatt) {
+        aicsHandler.onServicesDiscovered(gatt);
+    }
+
+    @Override
+    public void onCharacteristicRead(BluetoothGattCharacteristic characteristic) {
+        if (characteristic == null) return;
+        if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
+            micsHandler.handleCharacteristic(characteristic);
+        } else {
+            aicsHandler.handleCharacteristic(characteristic);
+        }
+    }
+
+    @Override
+    public void onCharacteristicChanged(BluetoothGattCharacteristic characteristic) {
+        if (characteristic == null) return;
+        if (characteristic.getUuid().equals(BleManager.MCS_MUTE)) {
+            micsHandler.handleCharacteristic(characteristic);
+        } else {
+            aicsHandler.handleCharacteristic(characteristic);
+        }
+    }
+
+    /**
+     * Implémentation requise de l'interface BleEventListener.
+     * Cette méthode est appelée lorsque l'écriture du descriptor (CCCD) est terminée.
+     */
+    @Override
+    public void onDescriptorWrite(BluetoothGattDescriptor descriptor, int status) {
+        String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
+        uiController.showMessage("Descriptor write: " + uuid + " status=" + status);
+        Log.d(TAG, "onDescriptorWrite uuid=" + uuid + " status=" + status);
+    }
+
+    @Override
+    public void onError(String message) {
+        uiController.showMessage("Erreur BLE: " + message);
+    }
+
+    // -------------------------
+    // MicsHandler.MicsListener
+    // -------------------------
+    @Override
+    public void onMuteStateUpdated(String humanReadable) {
+        uiController.updateMicStatus(humanReadable);
+    }
+
+    // -------------------------
+    // AicsHandler.AicsListener
+    // -------------------------
+    @Override
+    public void onAudioInputState(String human) {
+        uiController.updateAudioInputState(human);
+    }
+
+    @Override
+    public void onGainSettings(String human) {
+        uiController.updateGainSettings(human);
+    }
+
+    @Override
+    public void onAudioInputType(String human) {
+        uiController.updateAudioInputType(human);
+    }
+
+    @Override
+    public void onAudioInputStatus(String human) {
+        uiController.updateAudioInputStatus(human);
+    }
+
+    @Override
+    public void onAudioInputDescription(String human) {
+        uiController.updateAudioInputDescription(human);
     }
 }
