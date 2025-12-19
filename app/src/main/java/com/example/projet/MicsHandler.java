@@ -67,14 +67,40 @@ public class MicsHandler {
     }
 
     public void setMute(BluetoothGatt gatt, boolean mute) {
-        if (gatt == null) return;
+        if (gatt == null) {
+            Log.w(TAG, "setMute: gatt is null");
+            return;
+        }
+
         BluetoothGattService service = gatt.getService(MCS_SERVICE);
-        if (service == null) return;
+        if (service == null) {
+            Log.w(TAG, "setMute: MICS service not found");
+            return;
+        }
 
         BluetoothGattCharacteristic muteChar = service.getCharacteristic(MCS_MUTE);
-        if (muteChar == null) return;
+        if (muteChar == null) {
+            Log.w(TAG, "setMute: Mute characteristic not found");
+            return;
+        }
+
+        // Vérifier les propriétés de la caractéristique
+        int props = muteChar.getProperties();
+        Log.d(TAG, "setMute: Mute characteristic properties = " + props);
+
+        boolean hasWrite = (props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0;
+        boolean hasWriteNoResponse = (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
+
+        Log.d(TAG, "setMute: hasWrite=" + hasWrite + ", hasWriteNoResponse=" + hasWriteNoResponse);
+
+        if (!hasWrite && !hasWriteNoResponse) {
+            Log.e(TAG, "setMute: Characteristic does not support Write! Properties=" + props);
+            return;
+        }
 
         byte[] value = new byte[]{ (byte) (mute ? 0x01 : 0x00) };
+        Log.d(TAG, "setMute: Attempting to write value: " + (mute ? "0x01 (Muted)" : "0x00 (Not Muted)"));
+
         bleManager.writeCharacteristic(muteChar, value);
     }
 }

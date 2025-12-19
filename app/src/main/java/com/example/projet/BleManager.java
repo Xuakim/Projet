@@ -225,7 +225,13 @@ public class BleManager {
     public void writeCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         queueBleOperation(() -> {
             BluetoothGatt gatt = getBluetoothGatt();
-            if (gatt == null || characteristic == null) {
+            if (gatt == null) {
+                Log.w(TAG, "writeCharacteristic: GATT is null");
+                onOperationCompleted();
+                return;
+            }
+            if (characteristic == null) {
+                Log.w(TAG, "writeCharacteristic: characteristic is null");
                 onOperationCompleted();
                 return;
             }
@@ -234,11 +240,41 @@ public class BleManager {
                 onOperationCompleted();
                 return;
             }
+
+            // Vérifier si l'écriture est supportée
+            int props = characteristic.getProperties();
+            boolean hasWrite = (props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0;
+            boolean hasWriteNoResponse = (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
+
+            if (!hasWrite && !hasWriteNoResponse) {
+                Log.e(TAG, "writeCharacteristic: Characteristic does not support Write! UUID=" + characteristic.getUuid() + ", Properties=" + props);
+                notifyError("Caractéristique non-écriture: " + characteristic.getUuid());
+                onOperationCompleted();
+                return;
+            }
+
+            // Définir le WriteType approprié
+            if (hasWriteNoResponse) {
+                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_NO_RESPONSE");
+            } else {
+                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+                Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_DEFAULT");
+            }
+
             characteristic.setValue(value);
+
             try {
                 boolean ok = gatt.writeCharacteristic(characteristic);
                 Log.d(TAG, "writeCharacteristic " + characteristic.getUuid() + " -> " + ok);
-                if (!ok) onOperationCompleted();
+
+                if (!ok) {
+                    Log.e(TAG, "writeCharacteristic FAILED for " + characteristic.getUuid());
+                    notifyError("Échec écriture: " + characteristic.getUuid());
+                    onOperationCompleted();
+                } else {
+                    Log.d(TAG, "writeCharacteristic SUCCESS for " + characteristic.getUuid());
+                }
             } catch (SecurityException e) {
                 notifyError("Écriture caractéristique refusée : permission");
                 Log.w(TAG, "writeCharacteristic SecurityException", e);
@@ -424,6 +460,44 @@ public class BleManager {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) sb.append(String.format("%02X ", b));
         return sb.toString().trim();
+    }
+
+    /**
+     * Créer un bonding (appairage) avec le device si pas encore fait
+     */
+    @SuppressLint("MissingPermission")
+    public boolean createBond(BluetoothDevice device) {
+        if (device == null) {
+            Log.w(TAG, "createBond: device is null");
+            return false;
+        }
+        if (!hasConnectPermission()) {
+            notifyError("Permission BLUETOOTH_CONNECT manquante pour bonding");
+            return false;
+        }
+
+        int bondState = device.getBondState();
+        Log.d(TAG, "Current bond state: " + bondState);
+
+        if (bondState == BluetoothDevice.BOND_BONDED) {
+            Log.d(TAG, "Device already bonded");
+            return true;
+        }
+
+        if (bondState == BluetoothDevice.BOND_BONDING) {
+            Log.d(TAG, "Bonding already in progress");
+            return true;
+        }
+
+        try {
+            boolean result = device.createBond();
+            Log.d(TAG, "createBond requested -> " + result);
+            return result;
+        } catch (SecurityException e) {
+            notifyError("Bonding refusé : permission");
+            Log.w(TAG, "createBond SecurityException", e);
+            return false;
+        }
     }
 
     @SuppressLint("MissingPermission")

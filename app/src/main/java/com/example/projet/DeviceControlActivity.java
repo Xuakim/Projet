@@ -104,15 +104,23 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         // Boutons Mute / Unmute
         muteButton.setOnClickListener(v -> {
             if (bleManager != null && bleManager.getBluetoothGatt() != null) {
+                Log.d(TAG, "Mute button clicked");
                 micsHandler.setMute(bleManager.getBluetoothGatt(), true);
-                uiController.showMessage("Mute demandé...");
+                Toast.makeText(this, "Envoi commande Mute...", Toast.LENGTH_SHORT).show();
+            } else {
+                Log.w(TAG, "Mute button clicked but GATT not ready");
+                Toast.makeText(this, "Connexion non prête", Toast.LENGTH_SHORT).show();
             }
         });
 
         unmuteButton.setOnClickListener(v -> {
             if (bleManager != null && bleManager.getBluetoothGatt() != null) {
+                Log.d(TAG, "Unmute button clicked");
                 micsHandler.setMute(bleManager.getBluetoothGatt(), false);
-                uiController.showMessage("Unmute demandé...");
+                Toast.makeText(this, "Envoi commande Unmute...", Toast.LENGTH_SHORT).show();
+            } else {
+                Log.w(TAG, "Unmute button clicked but GATT not ready");
+                Toast.makeText(this, "Connexion non prête", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -155,6 +163,13 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         String name = safeGetDeviceName(device);
         uiController.showMessage("Connecté à " + name);
         Log.d(TAG, "onConnected: " + name);
+
+        // Forcer le bonding si nécessaire
+        if (device != null && device.getBondState() != BluetoothDevice.BOND_BONDED) {
+            Log.d(TAG, "Device not bonded, attempting to create bond...");
+            bleManager.createBond(device);
+            Toast.makeText(this, "Appairage en cours...", Toast.LENGTH_SHORT).show();
+        }
 
         runOnUiThread(() -> {
             if (deviceNameView != null) deviceNameView.setText("Appareil : " + name);
