@@ -2,7 +2,6 @@ package com.example.projet;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.util.Log;
 
@@ -22,7 +21,6 @@ public class MicsHandler {
     // UUIDs
     private static final UUID MCS_SERVICE = BleManager.MCS_SERVICE;
     private static final UUID MCS_MUTE = BleManager.MCS_MUTE;
-    private static final UUID CCCD = BleManager.CCCD;
 
     public MicsHandler(BleManager bleManager, MicsListener listener) {
         this.bleManager = bleManager;
@@ -36,10 +34,12 @@ public class MicsHandler {
             Log.d(TAG, "MICS service not present");
             return;
         }
+
         BluetoothGattCharacteristic muteChar = service.getCharacteristic(MCS_MUTE);
         if (muteChar != null) {
-            // Read initial value and enable notifications
+            // Lire la valeur initiale
             bleManager.safeReadCharacteristic(muteChar);
+            // Activer les notifications
             bleManager.enableNotifications(muteChar, true);
         } else {
             Log.d(TAG, "Mute characteristic not found");
@@ -66,14 +66,15 @@ public class MicsHandler {
         }
     }
 
-    public void setMute(BluetoothGatt gatt, boolean unmute) {
+    public void setMute(BluetoothGatt gatt, boolean mute) {
         if (gatt == null) return;
         BluetoothGattService service = gatt.getService(MCS_SERVICE);
         if (service == null) return;
+
         BluetoothGattCharacteristic muteChar = service.getCharacteristic(MCS_MUTE);
         if (muteChar == null) return;
-        byte[] value = new byte[]{ (byte) (unmute ? 0x00 : 0x01) };
-        muteChar.setValue(value);
+
+        byte[] value = new byte[]{ (byte) (mute ? 0x01 : 0x00) };
         bleManager.writeCharacteristic(muteChar, value);
     }
 }

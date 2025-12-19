@@ -3,10 +3,14 @@ package com.example.projet;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 public class AicsHandler {
@@ -15,6 +19,7 @@ public class AicsHandler {
 
     private final BleManager bleManager;
     private final AicsListener listener;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     public interface AicsListener {
         void onAudioInputState(String human);
@@ -45,22 +50,43 @@ public class AicsHandler {
             Log.d(TAG, "AICS not present");
             return;
         }
-        // Read and subscribe to relevant characteristics if present
-        readAndSubscribe(gatt, service, AUDIO_INPUT_STATE);
-        readAndSubscribe(gatt, service, GAIN_SETTINGS_PROPERTIES);
-        readAndSubscribe(gatt, service, AUDIO_INPUT_TYPE);
-        readAndSubscribe(gatt, service, AUDIO_INPUT_STATUS);
-        readAndSubscribe(gatt, service, AUDIO_INPUT_DESCRIPTION);
+
+        // Collecter toutes les caractéristiques à lire
+        List<UUID> charsToRead = new ArrayList<>();
+        charsToRead.add(AUDIO_INPUT_STATE);
+        charsToRead.add(GAIN_SETTINGS_PROPERTIES);
+        charsToRead.add(AUDIO_INPUT_TYPE);
+        charsToRead.add(AUDIO_INPUT_STATUS);
+        charsToRead.add(AUDIO_INPUT_DESCRIPTION);
+
+        // Lire et s'abonner avec un délai entre chaque opération
+        scheduleOperations(service, charsToRead, 0);
     }
 
-    private void readAndSubscribe(BluetoothGatt gatt, BluetoothGattService service, UUID charUuid) {
+    private void scheduleOperations(BluetoothGattService service, List<UUID> uuids, int index) {
+        if (index >= uuids.size()) return;
+
+        UUID charUuid = uuids.get(index);
         BluetoothGattCharacteristic c = service.getCharacteristic(charUuid);
+
         if (c != null) {
+            // Lire la caractéristique
             bleManager.safeReadCharacteristic(c);
-            // subscribe to notifications where applicable
+
+            // Si elle supporte les notifications, s'y abonner après un délai
             if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
-                bleManager.enableNotifications(c, true);
+                handler.postDelayed(() -> {
+                    bleManager.enableNotifications(c, true);
+                    // Passer à la suivante après un autre délai
+                    handler.postDelayed(() -> scheduleOperations(service, uuids, index + 1), 200);
+                }, 200);
+            } else {
+                // Pas de notification, passer directement à la suivante après un délai
+                handler.postDelayed(() -> scheduleOperations(service, uuids, index + 1), 200);
             }
+        } else {
+            // Caractéristique non trouvée, passer à la suivante
+            handler.postDelayed(() -> scheduleOperations(service, uuids, index + 1), 100);
         }
     }
 
@@ -68,6 +94,7 @@ public class AicsHandler {
         if (characteristic == null) return;
         UUID uuid = characteristic.getUuid();
         byte[] data = characteristic.getValue();
+
         if (uuid.equals(AUDIO_INPUT_STATE)) {
             listener.onAudioInputState(decodeAudioInputState(data));
         } else if (uuid.equals(GAIN_SETTINGS_PROPERTIES)) {
@@ -81,35 +108,59 @@ public class AicsHandler {
         }
     }
 
-    // Decoders (basic, readable)
+    // Decoders
     private String decodeAudioInputState(byte[] data) {
         if (data == null || data.length < 4) return "N/A";
-        ByteBuffer bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-        int gainSetting = bb.get(); // int8
-        int mute = bb.get() & 0xFF;
-        int gainMode = bb.get() & 0xFF;
-        int changeCounter = bb.get() & 0xFF;
-        return String.format("Gain=%d; Mute=%d; Mode=%d; Counter=%d", gainSetting, mute, gainMode, changeCounter);
+        try {
+            ByteBuffer bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+            int gainSetting = bb.get(); // int8
+            int mute = bb.get() & 0xFF;
+            int gainMode = bb.get() & 0xFF;
+            int changeCounter = bb.get() & 0xFF;
+
+            String muteStr = (mute == 0) ? "Not Muted" : (mute == 1) ? "Muted" : "Disabled";
+            String modeStr = (gainMode == 0) ? "Manual Only" : (gainMode == 1) ? "Auto Only" : (gainMode == 2) ? "Manual" : "Auto";
+
+            return String.format("Gain=%d; %s; %s; Counter=%d", gainSetting, muteStr, modeStr, changeCounter);
+        } catch (Exception e) {
+            Log.w(TAG, "Error decoding Audio Input State", e);
+            return "Error";
+        }
     }
 
     private String decodeGainSettings(byte[] data) {
         if (data == null || data.length < 3) return "N/A";
-        int units = data[0] & 0xFF; // 0.1 dB units
-        int min = data[1]; // int8
-        int max = data[2]; // int8
-        return String.format("Units=%.1f dB; Min=%d; Max=%d", units / 10.0, min, max);
+        try {
+            int units = data[0] & 0xFF; // 0.1 dB units
+            int min = data[1]; // int8
+            int max = data[2]; // int8
+            return String.format("Units=%.1f dB; Min=%d; Max=%d", units / 10.0, min, max);
+        } catch (Exception e) {
+            Log.w(TAG, "Error decoding Gain Settings", e);
+            return "Error";
+        }
     }
 
     private String decodeAudioInputType(byte[] data) {
         if (data == null || data.length < 1) return "N/A";
         int t = data[0] & 0xFF;
-        return "Type=" + t;
+        String typeStr;
+        switch (t) {
+            case 0x00: typeStr = "Unspecified"; break;
+            case 0x01: typeStr = "Bluetooth"; break;
+            case 0x02: typeStr = "Microphone"; break;
+            case 0x03: typeStr = "Analog"; break;
+            case 0x04: typeStr = "Digital"; break;
+            case 0x05: typeStr = "Radio"; break;
+            default: typeStr = "Unknown (" + t + ")"; break;
+        }
+        return typeStr;
     }
 
     private String decodeAudioInputStatus(byte[] data) {
         if (data == null || data.length < 1) return "N/A";
         int s = data[0] & 0xFF;
-        return "Status=" + s;
+        return (s == 0x00) ? "Inactive" : (s == 0x01) ? "Active" : "Unknown (" + s + ")";
     }
 
     private String decodeDescription(byte[] data) {
@@ -127,4 +178,3 @@ public class AicsHandler {
         return sb.toString().trim();
     }
 }
-
