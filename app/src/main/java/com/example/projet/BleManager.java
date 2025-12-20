@@ -8,7 +8,6 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
@@ -23,7 +22,6 @@ import android.util.Log;
 import androidx.core.content.ContextCompat;
 
 import java.util.LinkedList;
-import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
 
@@ -40,14 +38,14 @@ public class BleManager {
     private BluetoothLeScanner scanner;
     private BluetoothGatt bluetoothGatt;
 
-    // UUIDs utilisés
     public static final UUID MCS_SERVICE = UUID.fromString("0000184D-0000-1000-8000-00805f9b34fb");
     public static final UUID MCS_MUTE = UUID.fromString("00002BC3-0000-1000-8000-00805f9b34fb");
     public static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
-    // File d'attente pour les opérations BLE (évite la surcharge)
     private final Queue<Runnable> bleOperationQueue = new LinkedList<>();
     private boolean isOperationInProgress = false;
+    private int writeRetryCount = 0;
+    private static final int MAX_WRITE_RETRIES = 3;
 
     public BleManager(Context context, BleEventListener listener) {
         this.context = context.getApplicationContext();
@@ -60,7 +58,6 @@ public class BleManager {
         }
     }
 
-    // --- Scan ---
     @SuppressLint("MissingPermission")
     public void startScan() {
         Log.d(TAG, "startScan called");
@@ -129,10 +126,9 @@ public class BleManager {
         }
     };
 
-    // --- Connect / Disconnect ---
     @SuppressLint("MissingPermission")
     public void connect(BluetoothDevice device) {
-        if (!hasConnectPermission()) {
+        if (hasConnectPermission()) {
             notifyError("Permission BLUETOOTH_CONNECT manquante");
             return;
         }
@@ -168,7 +164,6 @@ public class BleManager {
         return bluetoothGatt;
     }
 
-    // --- File d'attente BLE (évite la surcharge) ---
     private void queueBleOperation(Runnable operation) {
         bleOperationQueue.add(operation);
         if (!isOperationInProgress) {
@@ -192,10 +187,9 @@ public class BleManager {
         mainHandler.postDelayed(() -> {
             isOperationInProgress = false;
             executeNextOperation();
-        }, 150); // Délai de 150ms entre chaque opération BLE
+        }, 100); // Réduit à 100ms pour plus de réactivité
     }
 
-    // --- Read / Write / Notifications ---
     @SuppressLint("MissingPermission")
     public void safeReadCharacteristic(BluetoothGattCharacteristic characteristic) {
         queueBleOperation(() -> {
@@ -204,7 +198,7 @@ public class BleManager {
                 onOperationCompleted();
                 return;
             }
-            if (!hasConnectPermission()) {
+            if (hasConnectPermission()) {
                 notifyError("Permission BLUETOOTH_CONNECT manquante pour lecture");
                 onOperationCompleted();
                 return;
@@ -235,13 +229,12 @@ public class BleManager {
                 onOperationCompleted();
                 return;
             }
-            if (!hasConnectPermission()) {
+            if (hasConnectPermission()) {
                 notifyError("Permission BLUETOOTH_CONNECT manquante pour écriture");
                 onOperationCompleted();
                 return;
             }
 
-            // Vérifier si l'écriture est supportée
             int props = characteristic.getProperties();
             boolean hasWrite = (props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0;
             boolean hasWriteNoResponse = (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
@@ -253,14 +246,9 @@ public class BleManager {
                 return;
             }
 
-            // Définir le WriteType approprié
-            if (hasWriteNoResponse) {
-                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
-                Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_NO_RESPONSE");
-            } else {
-                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-                Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_DEFAULT");
-            }
+            // Utiliser WRITE_TYPE_DEFAULT pour avoir une réponse du serveur
+            characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_DEFAULT");
 
             characteristic.setValue(value);
 
@@ -270,10 +258,24 @@ public class BleManager {
 
                 if (!ok) {
                     Log.e(TAG, "writeCharacteristic FAILED for " + characteristic.getUuid());
-                    notifyError("Échec écriture: " + characteristic.getUuid());
-                    onOperationCompleted();
+
+                    // Retry logic avec délai plus long
+                    if (writeRetryCount < MAX_WRITE_RETRIES) {
+                        writeRetryCount++;
+                        Log.w(TAG, "Retrying write in 300ms (attempt " + writeRetryCount + ")");
+                        mainHandler.postDelayed(() -> {
+                            writeRetryCount = 0; // Reset avant nouvelle tentative
+                            writeCharacteristic(characteristic, value);
+                        }, 300);
+                    } else {
+                        writeRetryCount = 0;
+                        notifyError("Échec écriture après " + MAX_WRITE_RETRIES + " tentatives");
+                        onOperationCompleted();
+                    }
                 } else {
+                    writeRetryCount = 0;
                     Log.d(TAG, "writeCharacteristic SUCCESS for " + characteristic.getUuid());
+                    // Ne pas appeler onOperationCompleted ici, attendre le callback onCharacteristicWrite
                 }
             } catch (SecurityException e) {
                 notifyError("Écriture caractéristique refusée : permission");
@@ -291,7 +293,7 @@ public class BleManager {
                 onOperationCompleted();
                 return;
             }
-            if (!hasConnectPermission()) {
+            if (hasConnectPermission()) {
                 notifyError("Permission BLUETOOTH_CONNECT manquante pour notifications");
                 onOperationCompleted();
                 return;
@@ -334,7 +336,6 @@ public class BleManager {
         }
     }
 
-    // --- GATT callback ---
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
@@ -353,7 +354,7 @@ public class BleManager {
                             notifyError("discoverServices permission refusée");
                             Log.w(TAG, "discoverServices SecurityException", e);
                         }
-                    }, 500);
+                    }, 600); // Augmenté à 600ms
                 } catch (SecurityException e) {
                     notifyError("discoverServices permission refusée");
                     Log.w(TAG, "discoverServices SecurityException", e);
@@ -393,7 +394,7 @@ public class BleManager {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 mainHandler.post(() -> listener.onCharacteristicRead(characteristic));
             } else {
-                notifyError("Characteristic read failed: " + status);
+                Log.e(TAG, "Characteristic read failed: " + status);
             }
         }
 
@@ -405,8 +406,14 @@ public class BleManager {
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             onOperationCompleted();
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                notifyError("Characteristic write failed: " + status);
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d(TAG, "onCharacteristicWrite SUCCESS for " + characteristic.getUuid());
+                mainHandler.post(() -> {
+                    notifyError("Écriture réussie !");
+                });
+            } else {
+                Log.e(TAG, "onCharacteristicWrite FAILED for " + characteristic.getUuid() + " status=" + status);
+                notifyError("Characteristic write failed: status=" + status);
             }
         }
 
@@ -425,12 +432,11 @@ public class BleManager {
         }
     };
 
-    // --- Helpers ---
     private boolean hasConnectPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED;
         } else {
-            return true;
+            return false;
         }
     }
 
@@ -462,16 +468,13 @@ public class BleManager {
         return sb.toString().trim();
     }
 
-    /**
-     * Créer un bonding (appairage) avec le device si pas encore fait
-     */
     @SuppressLint("MissingPermission")
     public boolean createBond(BluetoothDevice device) {
         if (device == null) {
             Log.w(TAG, "createBond: device is null");
             return false;
         }
-        if (!hasConnectPermission()) {
+        if (hasConnectPermission()) {
             notifyError("Permission BLUETOOTH_CONNECT manquante pour bonding");
             return false;
         }
