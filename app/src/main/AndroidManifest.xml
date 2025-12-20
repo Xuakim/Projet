@@ -16,7 +16,7 @@
 
     <!-- Permissions "legacy" pour Android 11 (API 30) et inférieur. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android_maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
     <!-- Déclare que l'application utilise le Bluetooth Low Energy -->
     <uses-feature
