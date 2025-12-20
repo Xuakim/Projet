@@ -7,7 +7,7 @@
         ACCESS_FINE_LOCATION est OBLIGATOIRE pour le scan BLE sur les versions Android 6 à 11.
         Sans elle, le scan échoue silencieusement (ne retourne aucun résultat).
     -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:ignore="CoarseFineLocation" />
 
     <!-- Permissions pour Android 12 (API 31) et supérieur. -->
     <!-- 'neverForLocation' est une bonne pratique pour affirmer que vous n'utilisez pas le scan pour la géolocalisation. -->
