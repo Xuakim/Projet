@@ -28,7 +28,11 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
     private BleManager bleManager;
     private DeviceListAdapter deviceListAdapter;
     private ActivityResultLauncher<String[]> permissionLauncher;
+    private ActivityResultLauncher<String> connectPermissionLauncher; // NEW
     private SwipeRefreshLayout swipeRefreshLayout;
+
+    // Device pending connection while waiting for permission
+    private BluetoothDevice pendingDeviceForConnect; // NEW
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,9 +67,32 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
                     if (allGranted) {
                         Log.d(TAG, "Permissions accordées par l'utilisateur");
                         checkPermissionsAndStartScan();
+
+                        // If we had a pending device waiting for connection, try to connect now
+                        if (pendingDeviceForConnect != null) {
+                            Log.d(TAG, "Permissions pour connexion OK, connexion au périphérique en attente...");
+                            connectToPendingDevice();
+                        }
                     } else {
                         Log.w(TAG, "Permissions refusées par l'utilisateur");
                         Toast.makeText(this, "Permissions refusées, impossible de scanner.", Toast.LENGTH_SHORT).show();
+                        // Clear pending device because user refused
+                        pendingDeviceForConnect = null;
+                    }
+                }
+        );
+
+        // Register a launcher for single BLUETOOTH_CONNECT permission when the user taps a device
+        connectPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> {
+                    if (granted) {
+                        Log.d(TAG, "BLUETOOTH_CONNECT accordée pour la connexion");
+                        connectToPendingDevice();
+                    } else {
+                        Log.w(TAG, "BLUETOOTH_CONNECT refusée par l'utilisateur");
+                        Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise pour se connecter.", Toast.LENGTH_SHORT).show();
+                        pendingDeviceForConnect = null;
                     }
                 }
         );
@@ -142,10 +169,14 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
         if (deviceListAdapter != null) deviceListAdapter.clear();
         if (bleManager != null) {
             Log.d(TAG, "startBleScan: lancement du scan BLE");
+
+            // Option 1 : Sans filtre (scan tous les appareils)
             bleManager.startScan();
+
+            // Option 2 : Avec filtre MICS uniquement (plus rapide)
+            // bleManager.startScan(true);
+
             Toast.makeText(this, "Scan BLE démarré...", Toast.LENGTH_SHORT).show();
-        } else {
-            Log.w(TAG, "startBleScan: bleManager null");
         }
     }
 
@@ -169,12 +200,37 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
 
     @Override
     public void onDeviceClick(BluetoothDevice device) {
+        // Stop scan immediately when user taps a device
         if (bleManager != null) bleManager.stopScan();
 
+        // If SDK >= S we need BLUETOOTH_CONNECT to connect; request it if missing
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permission BLUETOOTH_CONNECT manquante", Toast.LENGTH_SHORT).show();
-                checkPermissionsAndStartScan();
+                Log.d(TAG, "BLUETOOTH_CONNECT manquante -> demande de permission avant connexion");
+                pendingDeviceForConnect = device; // store device until permission is granted
+                connectPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT);
+                return;
+            }
+        }
+
+        // Permission already granted (or not required on older versions) -> connect now
+        Intent intent = new Intent(this, DeviceControlActivity.class);
+        intent.putExtra("device", device);
+        startActivity(intent);
+        overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
+    }
+
+    // Helper to continue connection after permission grant
+    private void connectToPendingDevice() {
+        if (pendingDeviceForConnect == null) return;
+        BluetoothDevice device = pendingDeviceForConnect;
+        pendingDeviceForConnect = null;
+
+        // Double-check permission before proceeding
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_CONNECT encore manquante après grant callback (échec)");
+                Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise.", Toast.LENGTH_SHORT).show();
                 return;
             }
         }

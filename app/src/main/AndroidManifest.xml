@@ -1,22 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
-
-    <!--
-        PERMISSION CRUCIALE MANQUANTE.
-        ACCESS_FINE_LOCATION est OBLIGATOIRE pour le scan BLE sur les versions Android 6 à 11.
-        Sans elle, le scan échoue silencieusement (ne retourne aucun résultat).
-    -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permissions pour Android 12 (API 31) et supérieur. -->
     <!-- 'neverForLocation' est une bonne pratique pour affirmer que vous n'utilisez pas le scan pour la géolocalisation. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_PRIVILEGED" tools:ignore="ProtectedPermissions" />
 
-    <!-- Permissions "legacy" pour Android 11 (API 30) et inférieur. -->
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android_maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
+
+    <!-- Pour les anciennes versions (< S), le scan BLE nécessitait l'accès à la localisation -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
     <!-- Déclare que l'application utilise le Bluetooth Low Energy -->
     <uses-feature

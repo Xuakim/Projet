@@ -15,6 +15,8 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
@@ -44,6 +46,10 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
 
     private BluetoothDevice currentDevice;
 
+    // NEW: launcher + pending device for permission flow
+    private ActivityResultLauncher<String> connectPermissionLauncher;
+    private BluetoothDevice pendingDeviceForConnect;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -64,6 +70,26 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         muteButton = findViewById(R.id.muteButton);
         unmuteButton = findViewById(R.id.unmuteButton);
         disconnectButton = findViewById(R.id.disconnectButton);
+
+        // Register permission launcher BEFORE performing the permission check
+        connectPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> {
+                    if (granted) {
+                        Log.d(TAG, "BLUETOOTH_CONNECT accordée - reprise de la connexion");
+                        if (pendingDeviceForConnect != null) {
+                            bleManager.connect(pendingDeviceForConnect);
+                            uiController.showMessage("Connexion en cours...");
+                            pendingDeviceForConnect = null;
+                        }
+                    } else {
+                        Log.w(TAG, "BLUETOOTH_CONNECT refusée - impossible de se connecter");
+                        uiController.showMessage("Permission BLUETOOTH_CONNECT requise pour se connecter");
+                        pendingDeviceForConnect = null;
+                        // Optionnel: finish();
+                    }
+                }
+        );
 
         // Toolbar navigation
         if (topAppBar != null) {
@@ -91,7 +117,10 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
                     bleManager.connect(currentDevice);
                     uiController.showMessage("Connexion en cours...");
                 } else {
-                    uiController.showMessage("Permission BLUETOOTH_CONNECT manquante");
+                    // Request permission and remember device to connect after grant
+                    pendingDeviceForConnect = currentDevice;
+                    uiController.showMessage("Demande de permission BLUETOOTH_CONNECT...");
+                    connectPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT);
                 }
             } else {
                 bleManager.connect(currentDevice);
@@ -164,11 +193,30 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         uiController.showMessage("Connecté à " + name);
         Log.d(TAG, "onConnected: " + name);
 
-        // Forcer le bonding si nécessaire
-        if (device != null && device.getBondState() != BluetoothDevice.BOND_BONDED) {
-            Log.d(TAG, "Device not bonded, attempting to create bond...");
-            bleManager.createBond(device);
-            Toast.makeText(this, "Appairage en cours...", Toast.LENGTH_SHORT).show();
+        // Ensure we have BLUETOOTH_CONNECT before calling getBondState() or createBond()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_CONNECT manquante au moment d'onConnected - demande de permission pour bonding");
+                // Remember device and ask permission; the launcher will resume bonding/connection when granted
+                pendingDeviceForConnect = device;
+                uiController.showMessage("Permission BLUETOOTH_CONNECT requise pour l'appairage");
+                connectPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT);
+                return;
+            }
+        }
+
+        // Forcer le bonding si nécessaire (permission checked above)
+        if (device != null) {
+            try {
+                if (device.getBondState() != BluetoothDevice.BOND_BONDED) {
+                    Log.d(TAG, "Device not bonded, attempting to create bond...");
+                    bleManager.createBond(device);
+                    Toast.makeText(this, "Appairage en cours...", Toast.LENGTH_SHORT).show();
+                }
+            } catch (SecurityException se) {
+                Log.w(TAG, "getBondState/createBond SecurityException", se);
+                uiController.showMessage("Impossible d'appairer : permission manquante");
+            }
         }
 
         runOnUiThread(() -> {
