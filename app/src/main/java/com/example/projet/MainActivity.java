@@ -182,6 +182,7 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
         Intent intent = new Intent(this, DeviceControlActivity.class);
         intent.putExtra("device", device);
         startActivity(intent);
+        overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
     }
 
     private String safeGetDeviceName(BluetoothDevice device) {
