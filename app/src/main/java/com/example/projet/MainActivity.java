@@ -1,11 +1,14 @@
 package com.example.projet;
 
 import android.Manifest;
+import android.app.AlertDialog;
 import android.bluetooth.BluetoothDevice;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -91,8 +94,28 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
                         connectToPendingDevice();
                     } else {
                         Log.w(TAG, "BLUETOOTH_CONNECT refusée par l'utilisateur");
-                        Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise pour se connecter.", Toast.LENGTH_SHORT).show();
-                        pendingDeviceForConnect = null;
+                        // If user denied permanently (Don't ask again), suggest opening settings
+                        if (!shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_CONNECT)) {
+                            // Permanently denied
+                            new AlertDialog.Builder(this)
+                                    .setTitle("Permission requise")
+                                    .setMessage("La permission BLUETOOTH_CONNECT est nécessaire pour se connecter. Ouvrir les paramètres de l'application ?")
+                                    .setPositiveButton("Paramètres", (d, w) -> {
+                                        if (isMiui()) {
+                                            boolean opened = openMiuiPermissionSettings();
+                                            if (!opened) openAppSettings();
+                                        } else {
+                                            openAppSettings();
+                                        }
+                                    })
+                                    .setNegativeButton("Annuler", (d, w) -> {
+                                        pendingDeviceForConnect = null;
+                                    })
+                                    .show();
+                        } else {
+                            Toast.makeText(this, "Permission BLUETOOTH_CONNECT requise pour se connecter.", Toast.LENGTH_SHORT).show();
+                            pendingDeviceForConnect = null;
+                        }
                     }
                 }
         );
@@ -294,5 +317,45 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
     @Override
     public void onDescriptorRead(android.bluetooth.BluetoothGattDescriptor descriptor, int status) {
         // Not used in this activity
+    }
+
+    private void openAppSettings() {
+        try {
+            Intent intent = new Intent();
+            intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            Uri uri = Uri.fromParts("package", getPackageName(), null);
+            intent.setData(uri);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "Impossible d'ouvrir les paramètres de l'application", e);
+        }
+    }
+
+    private boolean isMiui() {
+        String manufacturer = android.os.Build.MANUFACTURER;
+        if (manufacturer == null) return false;
+        return manufacturer.toLowerCase().contains("xiaomi") || manufacturer.toLowerCase().contains("redmi");
+    }
+
+    private boolean openMiuiPermissionSettings() {
+        String pkg = "com.miui.securitycenter";
+        String[] components = new String[]{
+                "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                "com.miui.permcenter.permissions.AppPermissionsEditorActivity",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity",
+                "com.miui.powercenter.PowerSettings"
+        };
+        for (String comp : components) {
+            try {
+                Intent intent = new Intent();
+                intent.setComponent(new ComponentName(pkg, comp));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+                return true;
+            } catch (Exception e) {
+                Log.d(TAG, "MIUI permission activity not available: " + comp);
+            }
+        }
+        return false;
     }
 }

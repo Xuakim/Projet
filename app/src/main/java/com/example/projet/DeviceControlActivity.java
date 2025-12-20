@@ -6,14 +6,19 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
-import android.content.pm.PackageManager;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.content.pm.PackageManager; // ADDED
+import android.content.Context;
+import android.content.ComponentName;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -47,7 +52,7 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
     private BluetoothDevice currentDevice;
 
     // NEW: launcher + pending device for permission flow
-    private ActivityResultLauncher<String> connectPermissionLauncher;
+    private ActivityResultLauncher<String[]> permissionLauncher; // request multiple permissions
     private BluetoothDevice pendingDeviceForConnect;
 
     @Override
@@ -57,12 +62,12 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
 
         uiController = new UiController(this);
 
-        // Initialisation BleManager et handlers
+        // Initialize BLE manager and handlers
         bleManager = new BleManager(this, this);
         micsHandler = new MicsHandler(bleManager, this);
         aicsHandler = new AicsHandler(bleManager, this);
 
-        // Views
+        // Initialize views
         topAppBar = findViewById(R.id.topAppBar);
         deviceNameView = findViewById(R.id.deviceName);
         microphoneIcon = findViewById(R.id.microphoneIcon);
@@ -71,22 +76,60 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         unmuteButton = findViewById(R.id.unmuteButton);
         disconnectButton = findViewById(R.id.disconnectButton);
 
-        // Register permission launcher BEFORE performing the permission check
-        connectPermissionLauncher = registerForActivityResult(
-                new ActivityResultContracts.RequestPermission(),
-                granted -> {
-                    if (granted) {
-                        Log.d(TAG, "BLUETOOTH_CONNECT accordée - reprise de la connexion");
-                        if (pendingDeviceForConnect != null) {
-                            bleManager.connect(pendingDeviceForConnect);
-                            uiController.showMessage("Connexion en cours...");
-                            pendingDeviceForConnect = null;
+        // Register a multiple-permission launcher
+        permissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestMultiplePermissions(),
+                result -> {
+                    boolean allGranted = true;
+                    for (Boolean granted : result.values()) {
+                        if (!Boolean.TRUE.equals(granted)) {
+                            allGranted = false;
+                            break;
+                        }
+                    }
+                    if (allGranted) {
+                        Log.d(TAG, "Permissions BLE accordées via permissionLauncher");
+                        uiController.showMessage("Permissions accordées, connexion... ");
+                        // Prefer pendingDeviceForConnect, else currentDevice
+                        BluetoothDevice toConnect = pendingDeviceForConnect != null ? pendingDeviceForConnect : currentDevice;
+                        pendingDeviceForConnect = null;
+                        if (toConnect != null) {
+                            try {
+                                bleManager.connect(toConnect);
+                            } catch (Exception e) {
+                                Log.w(TAG, "Erreur lors de la connexion après permission", e);
+                                uiController.showMessage("Erreur connexion: " + e.getMessage());
+                            }
                         }
                     } else {
-                        Log.w(TAG, "BLUETOOTH_CONNECT refusée - impossible de se connecter");
-                        uiController.showMessage("Permission BLUETOOTH_CONNECT requise pour se connecter");
+                        Log.w(TAG, "Permissions BLE refusées via permissionLauncher");
+                        uiController.showMessage("Permissions BLE requises");
+                        // If user denied permanently, suggest opening settings
+                        boolean showRationale = false;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && pendingDeviceForConnect != null) {
+                            String[] checkPerms = new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN};
+                            for (String p : checkPerms) {
+                                if (p != null && shouldShowRequestPermissionRationale(p)) {
+                                    showRationale = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!showRationale && pendingDeviceForConnect != null) {
+                            // likely permanently denied
+                            uiController.showMessage("Veuillez autoriser les permissions BLE dans les paramètres de l'app");
+                            // Try opening MIUI-specific permission screens first for MIUI devices
+                            if (isMiui()) {
+                                boolean opened = openMiuiPermissionSettings();
+                                if (!opened) {
+                                    // fallback to app settings
+                                    openAppSettings();
+                                }
+                            } else {
+                                openAppSettings();
+                            }
+                        }
                         pendingDeviceForConnect = null;
-                        // Optionnel: finish();
                     }
                 }
         );
@@ -113,18 +156,28 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         // Tenter la connexion si permission accordée
         if (currentDevice != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                boolean hasConnect = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+                boolean hasScan = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+                if (hasConnect && hasScan) {
                     bleManager.connect(currentDevice);
                     uiController.showMessage("Connexion en cours...");
                 } else {
-                    // Request permission and remember device to connect after grant
+                    // Request permissions and remember device to connect after grant
                     pendingDeviceForConnect = currentDevice;
-                    uiController.showMessage("Demande de permission BLUETOOTH_CONNECT...");
-                    connectPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT);
+                    uiController.showMessage("Demande des permissions BLUETOOTH_CONNECT/SCAN...");
+                    String[] perms = new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN};
+                    permissionLauncher.launch(perms);
                 }
             } else {
-                bleManager.connect(currentDevice);
-                uiController.showMessage("Connexion en cours...");
+                // pre-S flow: require ACCESS_FINE_LOCATION on older devices
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    bleManager.connect(currentDevice);
+                    uiController.showMessage("Connexion en cours...");
+                } else {
+                    pendingDeviceForConnect = currentDevice;
+                    uiController.showMessage("Demande permission localisation pour BLE (pré-S)...");
+                    permissionLauncher.launch(new String[]{Manifest.permission.ACCESS_FINE_LOCATION});
+                }
             }
         } else {
             uiController.showMessage("Aucun appareil fourni");
@@ -200,7 +253,7 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
                 // Remember device and ask permission; the launcher will resume bonding/connection when granted
                 pendingDeviceForConnect = device;
                 uiController.showMessage("Permission BLUETOOTH_CONNECT requise pour l'appairage");
-                connectPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT);
+                permissionLauncher.launch(new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN});
                 return;
             }
         }
@@ -439,6 +492,71 @@ public class DeviceControlActivity extends AppCompatActivity implements BleEvent
         } catch (SecurityException e) {
             Log.w(TAG, "Permission refusée pour getAddress", e);
             return "Inconnu";
+        }
+    }
+
+    // Open generic app settings
+    private void openAppSettings() {
+        try {
+            Intent intent = new Intent();
+            intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            Uri uri = Uri.fromParts("package", getPackageName(), null);
+            intent.setData(uri);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "Impossible d'ouvrir les paramètres de l'application", e);
+        }
+    }
+
+    // Detect MIUI by checking system properties
+    private boolean isMiui() {
+        String manufacturer = android.os.Build.MANUFACTURER;
+        if (manufacturer == null) return false;
+        if (manufacturer.toLowerCase().contains("xiaomi") || manufacturer.toLowerCase().contains("redmi")) return true;
+        // also try MIUI system property
+        try {
+            Class<?> cls = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method m = cls.getMethod("get", String.class);
+            String miui = (String) m.invoke(null, "ro.miui.ui.version.name");
+            return miui != null && !miui.isEmpty();
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    // Try opening MIUI permission/autostart screens. Returns true if one intent succeeded.
+    private boolean openMiuiPermissionSettings() {
+        // Try common MIUI activities
+        String pkg = "com.miui.securitycenter";
+        String[] components = new String[]{
+                "com.miui.permcenter.permissions.PermissionsEditorActivity", // MIUI 12+
+                "com.miui.permcenter.permissions.AppPermissionsEditorActivity", // older
+                "com.miui.permcenter.autostart.AutoStartManagementActivity",
+                "com.miui.powercenter.PowerSettings"
+        };
+        for (String comp : components) {
+            try {
+                Intent intent = new Intent();
+                intent.setComponent(new ComponentName(pkg, comp));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+                return true;
+            } catch (Exception e) {
+                Log.d(TAG, "MIUI permission activity not available: " + comp);
+            }
+        }
+        return false;
+    }
+
+    // Also offer to open battery optimization ignore screen
+    private void openIgnoreBatteryOptimizations() {
+        try {
+            Intent intent = new Intent();
+            intent.setAction(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to open battery optimization settings", e);
         }
     }
 }
