@@ -139,7 +139,6 @@ public class BleManager {
             return;
         }
 
-        // Si une connexion existe déjà, la fermer d'abord
         if (bluetoothGatt != null) {
             Log.w(TAG, "Closing existing GATT connection before new connect");
             try {
@@ -165,50 +164,20 @@ public class BleManager {
             try {
                 Log.d(TAG, "Disconnecting GATT...");
                 bluetoothGatt.disconnect();
-
-                // Attendre que la déconnexion soit effective avant de fermer
-                mainHandler.postDelayed(() -> {
-                    try {
-                        if (bluetoothGatt != null) {
-                            bluetoothGatt.close();
-                            Log.d(TAG, "GATT closed properly");
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "Error closing GATT", e);
-                    } finally {
-                        bluetoothGatt = null;
-                    }
-                }, 300);
-
             } catch (SecurityException e) {
                 notifyError("Permission refusée pour déconnecter");
                 Log.w(TAG, "disconnect SecurityException", e);
-                bluetoothGatt = null;
+                // Still try to close gatt
+                if (bluetoothGatt != null) {
+                    bluetoothGatt.close();
+                    bluetoothGatt = null;
+                }
             }
         }
     }
 
     public synchronized BluetoothGatt getBluetoothGatt() {
         return bluetoothGatt;
-    }
-
-    /**
-     * Vider le cache GATT pour forcer Android à redécouvrir les services
-     * Utilise une API cachée via reflection
-     */
-    private boolean refreshGattCache(BluetoothGatt gatt) {
-        if (gatt == null) return false;
-        try {
-            java.lang.reflect.Method refresh = gatt.getClass().getMethod("refresh");
-            if (refresh != null) {
-                boolean result = (boolean) refresh.invoke(gatt);
-                Log.d(TAG, "refreshGattCache invoked -> " + result);
-                return result;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "refreshGattCache failed", e);
-        }
-        return false;
     }
 
     private void queueBleOperation(Runnable operation) {
@@ -304,14 +273,10 @@ public class BleManager {
 
                 if (!ok) {
                     Log.e(TAG, "writeCharacteristic FAILED for " + characteristic.getUuid());
-
                     if (writeRetryCount < MAX_WRITE_RETRIES) {
                         writeRetryCount++;
                         Log.w(TAG, "Retrying write in 300ms (attempt " + writeRetryCount + ")");
-                        mainHandler.postDelayed(() -> {
-                            writeRetryCount = 0;
-                            writeCharacteristic(characteristic, value);
-                        }, 300);
+                        mainHandler.postDelayed(() -> writeCharacteristic(characteristic, value), 300);
                     } else {
                         writeRetryCount = 0;
                         notifyError("Échec écriture après " + MAX_WRITE_RETRIES + " tentatives");
@@ -319,7 +284,6 @@ public class BleManager {
                     }
                 } else {
                     writeRetryCount = 0;
-                    Log.d(TAG, "writeCharacteristic SUCCESS for " + characteristic.getUuid());
                 }
             } catch (SecurityException e) {
                 notifyError("Écriture caractéristique refusée : permission");
@@ -389,6 +353,10 @@ public class BleManager {
                 Log.w(TAG, "Connection state change error: status=" + status);
                 if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                     mainHandler.post(() -> listener.onDisconnected(device));
+                    if (bluetoothGatt != null) {
+                        bluetoothGatt.close();
+                        bluetoothGatt = null;
+                    }
                 }
                 return;
             }
@@ -396,31 +364,25 @@ public class BleManager {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 Log.d(TAG, "GATT connecté");
                 serviceDiscoveryRetries = 0;
-
-                // Nettoyer le cache GATT pour éviter les problèmes de services obsolètes
-                refreshGattCache(gatt);
-
                 mainHandler.post(() -> listener.onConnected(device));
 
-                try {
-                    final BluetoothGatt localGatt = gatt;
-                    // Délai augmenté pour laisser le temps au serveur de se stabiliser
-                    mainHandler.postDelayed(() -> {
-                        try {
-                            Log.d(TAG, "Lancement delayed de discoverServices()");
-                            if (localGatt != null) localGatt.discoverServices();
-                        } catch (SecurityException e) {
-                            notifyError("discoverServices permission refusée");
-                            Log.w(TAG, "discoverServices SecurityException", e);
-                        }
-                    }, 1000); // 1 seconde pour laisser le temps au serveur
-                } catch (SecurityException e) {
-                    notifyError("discoverServices permission refusée");
-                    Log.w(TAG, "discoverServices SecurityException", e);
-                }
+                mainHandler.postDelayed(() -> {
+                    try {
+                        Log.d(TAG, "Lancement delayed de discoverServices()");
+                        if (bluetoothGatt != null) bluetoothGatt.discoverServices();
+                    } catch (SecurityException e) {
+                        notifyError("discoverServices permission refusée");
+                        Log.w(TAG, "discoverServices SecurityException", e);
+                    }
+                }, 600); // Délai pour la stabilité
+
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 Log.d(TAG, "GATT déconnecté");
                 mainHandler.post(() -> listener.onDisconnected(device));
+                if (bluetoothGatt != null) {
+                    bluetoothGatt.close();
+                    bluetoothGatt = null;
+                }
             }
         }
 
@@ -469,9 +431,6 @@ public class BleManager {
             onOperationCompleted();
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d(TAG, "onCharacteristicWrite SUCCESS for " + characteristic.getUuid());
-                mainHandler.post(() -> {
-                    notifyError("Écriture réussie !");
-                });
             } else {
                 Log.e(TAG, "onCharacteristicWrite FAILED for " + characteristic.getUuid() + " status=" + status);
                 notifyError("Characteristic write failed: status=" + status);

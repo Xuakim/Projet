@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends AppCompatActivity implements BleEventListener,
         DeviceListAdapter.OnDeviceClickListener {
@@ -27,6 +28,7 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
     private BleManager bleManager;
     private DeviceListAdapter deviceListAdapter;
     private ActivityResultLauncher<String[]> permissionLauncher;
+    private SwipeRefreshLayout swipeRefreshLayout;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -40,6 +42,13 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         deviceListAdapter = new DeviceListAdapter(this, this);
         recyclerView.setAdapter(deviceListAdapter);
+
+        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            Log.d(TAG, "Pull-to-refresh triggered");
+            startBleScan();
+            swipeRefreshLayout.setRefreshing(false); // Stop the refreshing indicator
+        });
 
         permissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestMultiplePermissions(),
@@ -197,93 +206,36 @@ public class MainActivity extends AppCompatActivity implements BleEventListener,
 
     @Override
     public void onConnected(BluetoothDevice device) {
-        runOnUiThread(() -> {
-            String name = (device != null) ? safeGetDeviceName(device) : "Inconnu";
-            Log.d(TAG, "onConnected: " + name);
-            Toast.makeText(MainActivity.this, "Connecté à " + name, Toast.LENGTH_SHORT).show();
-            if (bleManager != null) {
-                bleManager.stopScan();
-                Log.d(TAG, "Scan arrêté après connexion");
-            }
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onDisconnected(BluetoothDevice device) {
-        runOnUiThread(() -> {
-            String name = (device != null) ? safeGetDeviceName(device) : "Inconnu";
-            Log.d(TAG, "onDisconnected: " + name);
-            Toast.makeText(MainActivity.this, "Déconnecté de " + name, Toast.LENGTH_SHORT).show();
-            if (bleManager != null) {
-                Log.d(TAG, "Relancement du scan après déconnexion");
-                bleManager.startScan();
-            }
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onServicesDiscovered(android.bluetooth.BluetoothGatt gatt) {
-        runOnUiThread(() -> {
-            String info = (gatt != null && gatt.getDevice() != null) ? safeGetDeviceName(gatt.getDevice()) : "device";
-            Log.d(TAG, "onServicesDiscovered for " + info);
-            Toast.makeText(MainActivity.this, "Services découverts pour " + info, Toast.LENGTH_SHORT).show();
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onCharacteristicRead(android.bluetooth.BluetoothGattCharacteristic characteristic) {
-        runOnUiThread(() -> {
-            if (characteristic == null) {
-                Log.w(TAG, "onCharacteristicRead: characteristic null");
-                return;
-            }
-            String uuid = characteristic.getUuid() != null ? characteristic.getUuid().toString() : "unknown";
-            Log.d(TAG, "onCharacteristicRead uuid=" + uuid);
-            Toast.makeText(MainActivity.this, "Caractéristique lue: " + uuid, Toast.LENGTH_SHORT).show();
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onCharacteristicChanged(android.bluetooth.BluetoothGattCharacteristic characteristic) {
-        runOnUiThread(() -> {
-            if (characteristic == null) {
-                Log.w(TAG, "onCharacteristicChanged: characteristic null");
-                return;
-            }
-            String uuid = characteristic.getUuid() != null ? characteristic.getUuid().toString() : "unknown";
-            Log.d(TAG, "onCharacteristicChanged uuid=" + uuid);
-            Toast.makeText(MainActivity.this, "Notification reçue: " + uuid, Toast.LENGTH_SHORT).show();
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onDescriptorWrite(android.bluetooth.BluetoothGattDescriptor descriptor, int status) {
-        runOnUiThread(() -> {
-            String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
-            Log.d(TAG, "onDescriptorWrite uuid=" + uuid + " status=" + status);
-            Toast.makeText(MainActivity.this, "Descriptor écrit: " + uuid + " (status=" + status + ")", Toast.LENGTH_SHORT).show();
-        });
+        // Not used in this activity
     }
 
     @Override
     public void onDescriptorRead(android.bluetooth.BluetoothGattDescriptor descriptor, int status) {
-        runOnUiThread(() -> {
-            String uuid = (descriptor != null && descriptor.getUuid() != null) ? descriptor.getUuid().toString() : "unknown";
-            Log.d(TAG, "onDescriptorRead uuid=" + uuid + " status=" + status);
-            if (descriptor == null) return;
-
-            // Si tu veux filtrer et agir seulement sur le CCCD du MCS_MUTE
-            android.bluetooth.BluetoothGattCharacteristic parent = descriptor.getCharacteristic();
-            if (parent != null && parent.getUuid() != null && parent.getUuid().equals(BleManager.MCS_MUTE)) {
-                byte[] value = descriptor.getValue();
-                String hex = (value != null) ? BleManager.bytesToHex(value) : "null";
-                Log.d(TAG, "CCCD value for MCS_MUTE: " + hex);
-                Toast.makeText(MainActivity.this, "CCCD lu: " + hex, Toast.LENGTH_SHORT).show();
-                // Optionnel : mettre à jour l'UI si nécessaire (adapter, TextView, etc.)
-            } else {
-                // comportement par défaut : log / toast pour debug
-                Toast.makeText(MainActivity.this, "Descriptor lu: " + uuid + " (status=" + status + ")", Toast.LENGTH_SHORT).show();
-            }
-        });
+        // Not used in this activity
     }
 }
