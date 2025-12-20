@@ -20,6 +20,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import androidx.annotation.RequiresPermission;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.util.LinkedList;
@@ -46,8 +48,6 @@ public class BleManager {
 
     private final Queue<Runnable> bleOperationQueue = new LinkedList<>();
     private boolean isOperationInProgress = false;
-    private int writeRetryCount = 0;
-    private static final int MAX_WRITE_RETRIES = 3;
 
     public BleManager(Context context, BleEventListener listener) {
         this.context = context.getApplicationContext();
@@ -235,16 +235,12 @@ public class BleManager {
     public void writeCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value) {
         queueBleOperation(() -> {
             BluetoothGatt gatt = getBluetoothGatt();
-            if (gatt == null) {
-                Log.w(TAG, "writeCharacteristic: GATT is null");
+            if (gatt == null || characteristic == null) {
+                Log.w(TAG, "writeCharacteristic: GATT or characteristic is null");
                 onOperationCompleted();
                 return;
             }
-            if (characteristic == null) {
-                Log.w(TAG, "writeCharacteristic: characteristic is null");
-                onOperationCompleted();
-                return;
-            }
+
             if (!hasConnectPermission()) {
                 notifyError("Permission BLUETOOTH_CONNECT manquante pour écriture");
                 onOperationCompleted();
@@ -252,18 +248,18 @@ public class BleManager {
             }
 
             int props = characteristic.getProperties();
-            boolean hasWrite = (props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0;
-            boolean hasWriteNoResponse = (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0;
-
-            if (!hasWrite && !hasWriteNoResponse) {
-                Log.e(TAG, "writeCharacteristic: Characteristic does not support Write! UUID=" + characteristic.getUuid() + ", Properties=" + props);
+            if ((props & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0 && (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0) {
                 notifyError("Caractéristique non-écriture: " + characteristic.getUuid());
                 onOperationCompleted();
                 return;
             }
 
-            characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            Log.d(TAG, "writeCharacteristic: Using WRITE_TYPE_DEFAULT");
+            // Set the write type
+            if ((props & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) {
+                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            } else {
+                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+            }
 
             characteristic.setValue(value);
 
@@ -272,18 +268,8 @@ public class BleManager {
                 Log.d(TAG, "writeCharacteristic " + characteristic.getUuid() + " -> " + ok);
 
                 if (!ok) {
-                    Log.e(TAG, "writeCharacteristic FAILED for " + characteristic.getUuid());
-                    if (writeRetryCount < MAX_WRITE_RETRIES) {
-                        writeRetryCount++;
-                        Log.w(TAG, "Retrying write in 300ms (attempt " + writeRetryCount + ")");
-                        mainHandler.postDelayed(() -> writeCharacteristic(characteristic, value), 300);
-                    } else {
-                        writeRetryCount = 0;
-                        notifyError("Échec écriture après " + MAX_WRITE_RETRIES + " tentatives");
-                        onOperationCompleted();
-                    }
-                } else {
-                    writeRetryCount = 0;
+                    notifyError("Échec immédiat de l'écriture pour " + characteristic.getUuid());
+                    onOperationCompleted(); // Libérer la file si l'écriture échoue immédiatement
                 }
             } catch (SecurityException e) {
                 notifyError("Écriture caractéristique refusée : permission");
@@ -345,6 +331,7 @@ public class BleManager {
     }
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+        @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             BluetoothDevice device = (gatt != null) ? gatt.getDevice() : null;
